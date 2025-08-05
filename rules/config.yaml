@@ -1,0 +1,66 @@
+grouping:
+  time_threshold: 3.0 # (giây) Thời gian tối đa giữa các hành động liên tiếp để gom thành một khối.
+
+events:
+  s_events: ['PASS', 'DRIVE']
+  g_events: ['Goal', 'Shots on target', 'Shots off target'] 
+  k_events: ['Penalty', 'Direct free-kick', 'Corner']
+  f_events: ['Foul']
+  c_events: ['Card']
+  e_events: ['Main camera center']
+
+windows:
+  # Cho G-events (Bàn thắng, Sút, v.v.)
+  g_event:
+    pre_window: 15        # Lùi lại bao nhiêu giây để tìm S-events.
+    s_search_start: 7     # Bắt đầu tìm S-events từ bao nhiêu giây trước G-event.
+    fallback_pre_window: 8 # Cửa sổ lùi mặc định nếu không tìm thấy S-event.
+    s_search_end: 15      # Kết thúc tìm S-events tại bao nhiêu giây trước G-event.
+    post_window_start: 5 # Bắt đầu tìm E-events sau sự kiện neo bao nhiêu giây.
+    post_window_end: 100  # Ngừng tìm E-events sau sự kiện neo bao nhiêu giây.
+    fallback_post_window: 30 # Cửa sổ tiến mặc định nếu không tìm thấy E-event.
+    
+
+  # Cho K-events (Pha cố định)
+  k_event:
+    pre_window: 10         # Lùi lại bao nhiêu giây để tìm bối cảnh.
+    post_window: 80     # Tiến tới bao nhiêu giây để tìm E-event kết thúc clip.
+    fallback_post_window: 30 # Cửa sổ tiến mặc định nếu không tìm thấy E-event 0.
+
+  # Cho chuỗi Foul -> Card
+  foul_card_sequence:
+    s_search_start: 5              # Bắt đầu tìm S-events từ bao nhiêu giây trước Foul.
+    s_search_end: 10               # Kết thúc tìm S-events tại bao nhiêu giây trước Foul.
+    fallback_pre_window: 10        # Cửa sổ lùi mặc định nếu không tìm thấy S-event trước Foul.
+    max_foul_to_card_duration: 10  # Thời gian tối đa từ Foul đến Card.
+    post_window_start: 5           # Bắt đầu tìm E-events sau Card
+    post_window_end: 80            # Ngừng tìm E-events sau Card
+    fallback_post_window: 15       # Cửa sổ tiến mặc định nếu không tìm thấy E-event
+
+# --- Lọc Clip ---
+filtering:
+  confidence_thresholds:
+    'Shots off target': 0.5
+    'Shots on target': 0.5
+    'Foul': 0.45
+    'Card': 0.45
+    'Penalty': 0.5
+    'Corner': 0.7
+    'Direct free-kick': 0.65
+    'Substitution': 0.5
+    'Throw-in': 0.5
+# --- Xếp hạng ---
+ranking:
+  priority_order:
+    - 'Goal'
+    - 'Shots off target'
+    - 'Shots on target'
+    - 'Foul->Card' 
+    - 'Penalty'
+    - 'Corner'
+    - 'Direct free-kick'
+
+
+predictions_json_path: "processed_prediction/UEFA_RMA_MCI_10042024_processed_predictions.json"
+output_dir: "highlight_results/UEFA_RMA_MCI_10042024"
+limit: 80

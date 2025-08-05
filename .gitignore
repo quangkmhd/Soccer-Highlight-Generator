@@ -1,0 +1,102 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+
+# Machine Learning / Deep Learning
+*.h5
+*.pth
+*.pt
+*.bin
+*.onnx
+*.tflite
+*.pb
+*.savedmodel
+*.keras
+model-*/
+!weight/action/model-019-0.797827.pth
+!weight/ball_action/model-006-0.864002.pth
+
+# Project specific
+pipeline_output/
+pipeline_temp/
+final_clips/
+*.mp4
+*.avi
+*.mov
+*.mkv
+!video_test/*.mp4
+!web_ui/backend/final_clips/*.mp4
+!web_ui/backend/static/pipeline_output_clips/**/*.mp4
+
+# Web/React
+node_modules/
+/web_ui/frontend/build
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.history
+*.sublime-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# Logs
+*.log
+logs/
+log/
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+.cache/
+*.json
+*.mp4
+*.pth
+*.txt
