@@ -60,6 +60,39 @@ ranking:
     - 'Corner'
     - 'Direct free-kick'
 
+# --- Chấm điểm highlight ---
+scoring:
+  # Điểm cơ bản cho từng loại sự kiện (nhân với confidence)
+  base_scores:
+    'Goal': 70
+    'Penalty': 60
+    'Direct freekick': 45
+    'Corner': 30
+    'Foul->Card': 35
+    'Shots off target': 25
+    'Shots on target': 25
+  
+  # Điểm mặc định cho các sự kiện không được định nghĩa
+  default_base_score: 20
+  
+  # Điểm bonus dựa trên góc camera/ngữ cảnh
+  camera_bonus:
+    'Inside the goal': 15
+    'Public': 15
+    'Main behind the goal': 15
+    'Close-up behind the goal': 15
+    'Goal line technology camera': 15
+  
+  # Bonus combo đặc biệt cho Goal và Penalty
+  combo_bonuses:
+    # Khi có cả "Inside the goal" và "Public"
+    spectacular_view_bonus: 15
+    # Khi có "Goal line technology camera"
+    tech_confirmation_bonus: 8
+  
+  # Điểm tối đa
+  max_score: 100
+
 
 predictions_json_path: "processed_prediction/UEFA_RMA_MCI_10042024_processed_predictions.json"
 output_dir: "highlight_results/UEFA_RMA_MCI_10042024"

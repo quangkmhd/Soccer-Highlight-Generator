@@ -158,12 +158,13 @@ def predict_on_video(video_path: Path,action_model_path: Path,ball_action_model_
     ball_action_predictor = MultiDimStackerPredictor(ball_action_model_path, device=f"cuda:{gpu_id}")
 
     logger.info(f"Processing video with {source_fps}fps, targeting {target_fps}fps for predictions")
-    
-    action_frame_indexes, action_raw_preds, action_predict_index2original = get_raw_predictions(
-        action_predictor, video_path, num_frames, source_fps, "Action Model", batch_size, target_fps)
 
     ball_action_frame_indexes, ball_action_raw_preds, ball_action_predict_index2original = get_raw_predictions(
         ball_action_predictor, video_path, num_frames, source_fps, "Ball-Action Model", batch_size, target_fps)
+   
+    action_frame_indexes, action_raw_preds, action_predict_index2original = get_raw_predictions(
+        action_predictor, video_path, num_frames, source_fps, "Action Model", batch_size, target_fps)
+
 
     all_predictions = []
     

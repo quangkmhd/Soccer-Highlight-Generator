@@ -347,6 +347,57 @@ class HighlightExtractor:
         
         return sorted(enhanced_clips, key=lambda x: x['start_time'])
 
+    def _get_event_priority(self, event_label):
+        """Lấy độ ưu tiên của event theo ranking config. Số càng nhỏ = ưu tiên càng cao"""
+        if event_label is None:
+            return 999  # Ưu tiên thấp nhất
+        
+        priority_order = self.config['ranking']['priority_order']
+        try:
+            return priority_order.index(event_label)
+        except ValueError:
+            return len(priority_order)  # Event không có trong ranking
+
+    def _should_merge_or_trim(self, current_label, clip_label):
+        """
+        Quyết định có nên merge hay trim clips dựa trên rule mới:
+        - Goal + Goal = merge
+        - Goal + khác = trim (giữ Goal, cắt khác)
+        - Khác + Khác (cùng loại) = merge  
+        - Khác + Khác (khác loại) = không merge
+        """
+        if current_label == clip_label:
+            return "merge"  # Cùng loại event -> merge
+        
+        current_priority = self._get_event_priority(current_label)
+        clip_priority = self._get_event_priority(clip_label)
+        
+        # Nếu có Goal thì Goal được ưu tiên
+        if current_label == 'Goal' or clip_label == 'Goal':
+            return "trim"  # Giữ Goal, cắt event khác
+        
+        # Nếu không có Goal và khác loại -> không merge
+        return "no_merge"
+
+    def _trim_overlapping_clip(self, higher_priority_clip, lower_priority_clip):
+        """Cắt bỏ phần overlap của clip có ưu tiên thấp hơn"""
+        if lower_priority_clip['start_time'] < higher_priority_clip['end_time']:
+            # Cắt đầu clip ưu tiên thấp hơn
+            overlap_end = higher_priority_clip['end_time']
+            if lower_priority_clip['end_time'] > overlap_end:
+                # Còn phần không overlap -> cắt đầu
+                lower_priority_clip['start_time'] = overlap_end
+                # Lọc lại events trong khoảng thời gian mới
+                lower_priority_clip['events'] = [
+                    event for event in lower_priority_clip['events']
+                    if event.get('timestamp', 0) >= overlap_end
+                ]
+                return lower_priority_clip
+            else:
+                # Toàn bộ clip bị overlap -> loại bỏ
+                return None
+        return lower_priority_clip
+
     def _merge_overlapping_clips(self, clips):
         if not clips:
             return []
@@ -362,13 +413,61 @@ class HighlightExtractor:
         for clip in clips_sorted[1:]:
             clip_primary_label = self._get_clip_primary_event_label(clip)
             
-            if (clip['start_time'] <= current_clip['end_time'] and 
-                current_primary_label == clip_primary_label and 
-                current_primary_label is not None):
-                current_clip['end_time'] = max(current_clip['end_time'], clip['end_time'])
-                current_events.extend(clip['events'])
-                group.append(clip)
+            # Kiểm tra overlap
+            if clip['start_time'] <= current_clip['end_time']:
+                merge_action = self._should_merge_or_trim(current_primary_label, clip_primary_label)
+                
+                if merge_action == "merge":
+                    # Merge hai clips cùng loại
+                    current_clip['end_time'] = max(current_clip['end_time'], clip['end_time'])
+                    current_events.extend(clip['events'])
+                    group.append(clip)
+                elif merge_action == "trim":
+                    # Trim clip có ưu tiên thấp hơn
+                    current_priority = self._get_event_priority(current_primary_label)
+                    clip_priority = self._get_event_priority(clip_primary_label)
+                    
+                    if current_priority < clip_priority:
+                        # Current clip ưu tiên cao hơn -> trim clip mới
+                        trimmed_clip = self._trim_overlapping_clip(current_clip, clip)
+                        if trimmed_clip:
+                            # Nếu còn phần không overlap, xử lý như clip riêng biệt
+                            clips_sorted.insert(clips_sorted.index(clip) + 1, trimmed_clip)
+                    else:
+                        # Clip mới ưu tiên cao hơn -> finalize current, bắt đầu mới
+                        if len(group) > 1:
+                            current_clip['events'] = current_events
+                            current_clip['merged_info'] = {
+                                'merged_clips_count': len(group),
+                                'primary_actions_merged': self._get_primary_actions_info(current_events)
+                            }
+                        
+                        # Trim current clip
+                        trimmed_current = self._trim_overlapping_clip(clip, current_clip)
+                        if trimmed_current:
+                            merged_clips.append(trimmed_current)
+                        
+                        # Bắt đầu với clip mới
+                        current_clip = clip
+                        current_events = current_clip['events'][:]
+                        current_primary_label = clip_primary_label
+                        group = [current_clip]
+                else:  # no_merge
+                    # Không merge, finalize current clip
+                    if len(group) > 1:
+                        current_clip['events'] = current_events
+                        current_clip['merged_info'] = {
+                            'merged_clips_count': len(group),
+                            'primary_actions_merged': self._get_primary_actions_info(current_events)
+                        }
+                    merged_clips.append(current_clip)
+
+                    current_clip = clip
+                    current_events = current_clip['events'][:]
+                    current_primary_label = clip_primary_label
+                    group = [current_clip]
             else:
+                # Không overlap, finalize current clip
                 if len(group) > 1:
                     current_clip['events'] = current_events
                     current_clip['merged_info'] = {
@@ -382,6 +481,7 @@ class HighlightExtractor:
                 current_primary_label = clip_primary_label
                 group = [current_clip]
 
+        # Xử lý clip cuối cùng
         if len(group) > 1:
             current_clip['events'] = current_events
             current_clip['merged_info'] = {

@@ -6,7 +6,7 @@ paths:
 models:
   # Đường dẫn đến các model weights (tương đối từ thư mục gốc)
   action_model: "weight/action/model-019-0.797827.pth"
-  ball_action_model: "weight/ball_action/model-019-0.797827.pth"
+  ball_action_model: "weight/ball/model-006-0.864002.pth"
   camera_model: "weight/camera/model_last.pth.tar"
 
 # Ball Action & Action Model Parameters

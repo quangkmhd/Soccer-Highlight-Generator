@@ -9,6 +9,7 @@ import argus
 
 from src.indexes import StackIndexesGenerator
 from src.frames import get_frames_processor
+import torch.cuda.amp
 
 
 def batched(iterable: Iterable, size: int):
@@ -42,7 +43,7 @@ class MultiDimStackerPredictor:
     def reset_buffers(self):
         self._frame_index2frame = dict()
         self._stack_indexes2features = dict()
-
+        
     def _clear_old(self, minimum_index: int):
         for index in list(self._frame_index2frame.keys()):
             if index < minimum_index:
@@ -54,7 +55,7 @@ class MultiDimStackerPredictor:
     @torch.no_grad()
     def predict(self, frame: torch.Tensor, index: int) -> tuple[Optional[torch.Tensor], int]:
         frame = frame.to(device=self.model.device)
-        processed = self.frames_processor(frame[None, None, ...])[0, 0].half()  # store in FP16 to save memory
+        processed = self.frames_processor(frame[None, None, ...])[0, 0]  
         self._frame_index2frame[index] = processed
         predict_index = index - self._predict_offset
         predict_indexes = self.indexes_generator.make_stack_indexes(predict_index)
@@ -63,17 +64,19 @@ class MultiDimStackerPredictor:
             stacks_indexes = list(batched(predict_indexes, self.model_stack_size))
             for stack_indexes in stacks_indexes:
                 if stack_indexes not in self._stack_indexes2features:
-                    frames = torch.stack([self._frame_index2frame[i] for i in stack_indexes], dim=0).float()
+                    frames = torch.stack([self._frame_index2frame[i] for i in stack_indexes], dim=0)  
                     if self.tta:
                         frames = torch.stack([frames, hflip(frames)], dim=0)
                     else:
                         frames = frames.unsqueeze(0)
-                    features = self.model.nn_module.forward_2d(frames)
-                    self._stack_indexes2features[stack_indexes] = features.half()
-            features = torch.cat([self._stack_indexes2features[s].float() for s in stacks_indexes], dim=1)
-            features = self.model.nn_module.forward_3d(features)
-            prediction = self.model.nn_module.forward_head(features)
-            prediction = self.model.prediction_transform(prediction)
+                    with torch.autocast(device_type="cuda"):
+                        features = self.model.nn_module.forward_2d(frames)
+                    self._stack_indexes2features[stack_indexes] = features.float()  
+            features = torch.cat([self._stack_indexes2features[s] for s in stacks_indexes], dim=1)  
+            with torch.autocast(device_type="cuda"):
+                features = self.model.nn_module.forward_3d(features)
+                prediction = self.model.nn_module.forward_head(features)
+            prediction = self.model.prediction_transform(prediction).float()
             prediction = torch.mean(prediction, dim=0)
             return prediction, predict_index
         else:
@@ -82,32 +85,18 @@ class MultiDimStackerPredictor:
         
     @torch.no_grad()
     def predict_batch(self, frames: list[torch.Tensor], indices: list[int]) -> list[tuple[Optional[torch.Tensor], int]]:
-        """
-        Predict batch of frames.
-        Args:
-            frames (list[Tensor]): List of frame tensors.
-            indices (list[int]): Corresponding indices for frames.
-        Returns:
-            list[tuple[Optional[Tensor], int]]: List of (prediction, predict_index) or (None, predict_index).
-        """
         assert len(frames) == len(indices), "Frames and indices must match"
-
-        # Handle empty batch
         if len(frames) == 0:
             return []
-
-        # Check for duplicate indices
         if len(set(indices)) != len(indices):
             raise ValueError("Duplicate indices found")
 
-        # Step 1: Sort by indices to ensure sequential order
         sorted_pairs = sorted(zip(frames, indices), key=lambda x: x[1])
         sorted_frames, sorted_indices = zip(*sorted_pairs)
 
-        # Step 2: Update buffer sequentially
         for frame, index in zip(sorted_frames, sorted_indices):
             frame = frame.to(device=self.model.device)
-            processed = self.frames_processor(frame[None, None, ...])[0, 0].half()
+            processed = self.frames_processor(frame[None, None, ...])[0, 0]
             self._frame_index2frame[index] = processed
 
         # Step 3: Collect all required stacks for the batch
@@ -129,7 +118,7 @@ class MultiDimStackerPredictor:
                 frame_to_stacks[index] = stacks_indexes
                 for stack_indexes in stacks_indexes:
                     if stack_indexes not in self._stack_indexes2features and stack_indexes not in all_stack_keys:
-                        stack_frames = torch.stack([self._frame_index2frame[i] for i in stack_indexes], dim=0).float()
+                        stack_frames = torch.stack([self._frame_index2frame[i] for i in stack_indexes], dim=0)  
                         if self.tta:
                             stack_frames = torch.stack([stack_frames, hflip(stack_frames)], dim=0)
                         else:
@@ -140,8 +129,9 @@ class MultiDimStackerPredictor:
         # Step 4: Batch forward_2d if there are stacks to process
         if all_stack_frames:
             batched_stack_frames = torch.cat(all_stack_frames, dim=0)
-            batched_features = self.model.nn_module.forward_2d(batched_stack_frames)
-            batched_features = batched_features.half()
+            with torch.autocast(device_type="cuda"):
+                batched_features = self.model.nn_module.forward_2d(batched_stack_frames)
+            batched_features = batched_features.float()  
             cursor = 0
             for i, key in enumerate(all_stack_keys):
                 slice_size = all_stack_frames[i].size(0)
@@ -158,15 +148,17 @@ class MultiDimStackerPredictor:
         for res_idx, idx in enumerate(sorted_indices):
             stacks_indexes = frame_to_stacks.get(idx, [])
             if stacks_indexes and all(s in self._stack_indexes2features for s in stacks_indexes):
-                features_3d_input = torch.cat([self._stack_indexes2features[s].float() for s in stacks_indexes], dim=1)
+                features_3d_input = torch.cat([self._stack_indexes2features[s] for s in stacks_indexes], dim=1)  # Remove .float()
                 all_3d_inputs.append(features_3d_input)
                 valid_indices_for_3d.append(res_idx)  # Use position in results
 
         if all_3d_inputs:
             batched_3d_input = torch.cat(all_3d_inputs, dim=0)
-            batched_3d_output = self.model.nn_module.forward_3d(batched_3d_input)
-            batched_prediction = self.model.nn_module.forward_head(batched_3d_output)
-            batched_prediction = self.model.prediction_transform(batched_prediction)
+            with torch.autocast(device_type="cuda"):
+                batched_3d_output = self.model.nn_module.forward_3d(batched_3d_input)
+                batched_prediction = self.model.nn_module.forward_head(batched_3d_output)
+            
+            batched_prediction = self.model.prediction_transform(batched_prediction).float()
             b_tta = 2 if self.tta else 1
             num_frames = len(valid_indices_for_3d)
             batched_prediction = batched_prediction.view(num_frames, b_tta, -1).mean(dim=1)

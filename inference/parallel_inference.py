@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Soccer Action Spotting - End-to-end Inference Pipeline
+# Soccer Action Spotting - End-to-end Inference Pipeline with Parallel Processing
 import argparse
 import json
 import logging
@@ -13,6 +13,8 @@ import shutil
 import time
 import torch
 from datetime import datetime
+import multiprocessing
+from multiprocessing import Process, Queue
 
 # Thiết lập đường dẫn để tìm các module
 root_dir = Path(__file__).parent.parent  # Đi lên một cấp từ thư mục inference
@@ -25,15 +27,15 @@ sys.path.append(str(root_dir / "rules"))
 # Import các module sau khi đã thiết lập đường dẫn
 from ball_action_spotting.ball_action_predict import predict_on_video
 from CALF_segmentation.camera_predict import camera_predict_on_video
-from rules.rules_main import load_config as load_rules_config
-from rules.rules_main import load_prediction_data, process_highlights, save_top_highlights
+from rules.rules_main import load_config as load_rules_config, load_prediction_data, process_highlights
 from rules.combine_predictions import combine_json_predictions
-from rules.rank_score import score_highlights_from_file, score_highlights_from_data, write_report
 from create_clips.cut_clips import create_clips_from_json
+from rules.rank_score import score_highlights_from_data, write_report
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
     handlers=[
         logging.StreamHandler(stream=sys.stdout)
     ]
@@ -63,7 +65,7 @@ def setup_output_directories(output_base: Path, video_name: str) -> dict:
     
     return dirs
 
-def run_ball_action_prediction(video_path: Path, config: dict, output_dir: Path) -> Path:
+def run_ball_action_prediction(video_path: Path, config: dict, output_dir: Path, result_queue=None) -> Path:
     """Run the ball action and action models prediction"""
     
     # Xác định đường dẫn file output
@@ -72,6 +74,8 @@ def run_ball_action_prediction(video_path: Path, config: dict, output_dir: Path)
     # Kiểm tra nếu file đã tồn tại
     if output_file.exists():
         logger.info(f"Ball action prediction file already exists: {output_file}. Skipping prediction.")
+        if result_queue is not None:
+            result_queue.put(output_file)
         return output_file
     
     logger.info("Running Ball Action and Action models prediction...")
@@ -101,11 +105,15 @@ def run_ball_action_prediction(video_path: Path, config: dict, output_dir: Path)
         if output_file.exists():
             logger.info(f"Using existing ball action prediction file despite error: {output_file}")
         else:
+            if result_queue is not None:
+                result_queue.put(Exception(f"Error during ball action prediction: {e}"))
             raise  # Re-raise if no file was created
     
+    if result_queue is not None:
+        result_queue.put(output_file)
     return output_file
 
-def run_camera_prediction(video_path: Path, config: dict, output_dir: Path) -> Path:
+def run_camera_prediction(video_path: Path, config: dict, output_dir: Path, result_queue=None) -> Path:
     """Run the camera model prediction using the dedicated function"""
     
     # Xác định đường dẫn file output
@@ -114,6 +122,8 @@ def run_camera_prediction(video_path: Path, config: dict, output_dir: Path) -> P
     # Kiểm tra nếu file đã tồn tại
     if expected_output.exists():
         logger.info(f"Camera prediction file already exists: {expected_output}. Skipping prediction.")
+        if result_queue is not None:
+            result_queue.put(expected_output)
         return expected_output
     
     logger.info("Running Camera model prediction...")
@@ -155,68 +165,49 @@ def run_camera_prediction(video_path: Path, config: dict, output_dir: Path) -> P
         # If file was created despite the error, use it
         if expected_output.exists():
             logger.info(f"Using existing camera prediction file despite error: {expected_output}")
+            if result_queue is not None:
+                result_queue.put(expected_output)
             return expected_output
         else:
+            if result_queue is not None:
+                result_queue.put(Exception(f"Error during camera prediction: {e}"))
             raise  # Re-raise if no file was created
     
+    if result_queue is not None:
+        result_queue.put(Path(output_file))
     return Path(output_file)
 
-
-
 def apply_rules_and_scoring(combined_json: Path, rules_config: Path, output_dir: Path) -> Path:
-    """Apply rules to combined predictions and then apply scoring system"""
-    
-    # Load combined predictions để xác định video_basename
+    """Apply rules and scoring system to the combined predictions"""
     prediction_data = load_prediction_data(combined_json)
     video_basename = Path(prediction_data.get('UrlLocal', combined_json.stem)).stem
     
-    # Xác định tên file output với scoring (kiểm tra file _scores.json)
     scored_output_file = output_dir / f"{video_basename}_scores.json"
     if scored_output_file.exists():
         logger.info(f"Found existing scored highlights file: {scored_output_file}. Skipping rules and scoring.")
         return scored_output_file
     
-    logger.info("Applying rules to combined predictions...")
+    logger.info("Applying rules and scoring to combined predictions...")
     
     try:
-        # Step 1: Apply rules to get initial highlights
         rules_config_data = load_rules_config(rules_config)
         top_highlights = process_highlights(prediction_data, rules_config_data)
         
-        # Step 2: Apply scoring system directly to the highlights data
         logger.info("Applying scoring system to highlights...")
         scored_results = score_highlights_from_data(
             highlights_data=top_highlights,
-            scoring_config=None,  # Use default scoring config
             sort_by_score=True
         )
         
-        # Step 3: Write scored results in the new format
         write_report(scored_results, str(scored_output_file))
         logger.info(f"Scored highlights saved to {scored_output_file}")
-        logger.info(f"Total highlights processed: {len(scored_results)}")
         
-        if scored_results:
-            avg_score = sum(r["score"] for r in scored_results) / len(scored_results)
-            logger.info(f"Top score: {scored_results[0]['score']} | Average score: {avg_score:.1f}")
-        
-        if not scored_output_file.exists():
-            logger.warning(f"Scoring completed but output file not found: {scored_output_file}")
     except Exception as e:
         logger.error(f"Error during rules application and scoring: {e}")
-        # Check if scored file was created despite error
         if scored_output_file.exists():
-            logger.info(f"Using existing scored file despite error: {scored_output_file}")
             return scored_output_file
-        else:
-            # Fallback to any existing highlights file
-            existing_files = list(output_dir.glob(f"{video_basename}_top_*_highlights.json"))
-            if existing_files:
-                logger.info(f"Using existing highlights file as fallback: {existing_files[0]}")
-                return existing_files[0]
-            else:
-                raise  # Re-raise if no file was created
-    
+        raise
+        
     return scored_output_file
 
 def cut_video_clips(highlights_json: Path, video_path: Path, config: dict, output_dir: Path) -> Path:
@@ -266,8 +257,8 @@ def cut_video_clips(highlights_json: Path, video_path: Path, config: dict, outpu
     
     return output_dir
 
-def run_inference_pipeline(video_path: Path, config_path: Path = Path("inference/inference_config.yaml")) -> Path:
-    """Run the complete inference pipeline"""
+def run_inference_pipeline_parallel(video_path: Path, config_path: Path = Path("inference/inference_config.yaml")) -> Path:
+    """Run the complete inference pipeline with parallel processing"""
     start_time = time.time()
     
     # Load configuration
@@ -277,20 +268,57 @@ def run_inference_pipeline(video_path: Path, config_path: Path = Path("inference
     output_base = Path(config['paths']['output_dir'])
     output_dirs = setup_output_directories(output_base, video_path.stem)
     
-    # Run Ball Action and Action models prediction
-    ball_action_json = run_ball_action_prediction(
-        video_path=video_path,
-        config=config,
-        output_dir=output_dirs["predictions"]
-    )
-    gc.collect()
+    # Run Ball Action and Camera predictions in parallel
+    logger.info("Starting parallel predictions for ball action and camera models")
     
-    # Run Camera model prediction
-    camera_json = run_camera_prediction(
-        video_path=video_path,
-        config=config,
-        output_dir=output_dirs["predictions"]
+    # Use queues to get results from processes
+    ball_action_queue = multiprocessing.Queue()
+    camera_queue = multiprocessing.Queue()
+    
+    # Create processes for each prediction
+    ball_action_process = Process(
+        target=run_ball_action_prediction,
+        args=(video_path, config, output_dirs["predictions"], ball_action_queue)
     )
+    
+    camera_process = Process(
+        target=run_camera_prediction,
+        args=(video_path, config, output_dirs["predictions"], camera_queue)
+    )
+    
+    # Start both processes
+    ball_action_process.start()
+    camera_process.start()
+    
+    # Wait for results
+    try:
+        ball_action_result = ball_action_queue.get()
+        camera_result = camera_queue.get()
+        
+        # Check for exceptions
+        if isinstance(ball_action_result, Exception):
+            raise ball_action_result
+        if isinstance(camera_result, Exception):
+            raise camera_result
+        
+        ball_action_json = ball_action_result
+        camera_json = camera_result
+        
+        logger.info("Both prediction processes completed successfully")
+    except Exception as e:
+        logger.error(f"Error in parallel processing: {e}")
+        raise
+    finally:
+        # Clean up processes
+        if ball_action_process.is_alive():
+            ball_action_process.terminate()
+        if camera_process.is_alive():
+            camera_process.terminate()
+            
+        ball_action_process.join()
+        camera_process.join()
+    
+    # Force garbage collection after model predictions
     gc.collect()
     
     # Step 1: Combine predictions from both models into a single JSON file
@@ -335,20 +363,22 @@ def run_inference_pipeline(video_path: Path, config_path: Path = Path("inference
     )
     
     elapsed_time = time.time() - start_time
-    logger.info(f"Complete inference pipeline finished in {elapsed_time:.2f} seconds")
+    logger.info(f"Complete parallel inference pipeline finished in {elapsed_time:.2f} seconds")
     logger.info(f"Output clips available at: {clips_dir}")
     
     return clips_dir
 
 def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description="Soccer Action Spotting - End-to-end Inference Pipeline")
+    parser = argparse.ArgumentParser(description="Soccer Action Spotting - End-to-end Parallel Inference Pipeline")
     parser.add_argument("--video", type=Path, required=True, help="Path to the input video file")
     parser.add_argument("--config", type=Path, default=Path("inference/inference_config.yaml"), help="Path to the inference configuration file")
     args = parser.parse_args()
     
-
-    output_dir = run_inference_pipeline(args.video, args.config)
+    # On Linux, must use 'spawn' method for safe parallel processing with GPU
+    multiprocessing.set_start_method('spawn')
+    
+    output_dir = run_inference_pipeline_parallel(args.video, args.config)
     logger.info(f"Successfully processed video. Output available at: {output_dir}")
 
 if __name__ == "__main__":
