@@ -16,10 +16,9 @@ sys.path.append(str(current_dir / "src"))  # Thêm đường dẫn đến thư m
 sys.path.append(str(current_dir / "Features"))  # Thêm đường dẫn đến thư mục Features
 
 try:
-    import tensorflow as tf  
-    tf.config.set_visible_devices([], 'GPU')
-except Exception as e:  
-    logging.warning(f"Cannot configure TensorFlow CPU-only: {e}")
+    import tensorflow as tf
+except Exception as e:
+    logging.warning(f"TensorFlow not available: {e}")
 
 # Import sau khi đã thiết lập đường dẫn
 from Features.VideoFeatureExtractor import VideoFeatureExtractor, PCAReducer
@@ -78,6 +77,8 @@ def run_inference(features: np.ndarray,model_path: str,device: torch.device,fps:
         num_detections=num_detections,
         framerate=int(fps),
     ).to(device)
+
+    logging.info(f"Inference will run on device: {device} (model parameters on {next(model.parameters()).device})")
 
     state = torch.load(model_path, map_location=device)
     model.load_state_dict(state['state_dict'])
@@ -149,10 +150,32 @@ def camera_predict_on_video(
     num_detections: int = 45,
     pca_file: str = None,
     scaler_file: str = None,
-    overwrite: bool = True
-) -> str:
+        overwrite: bool = True,
+    tf_cpu_only: bool = False
+ ) -> str:
     
     logging.info(f"Running camera prediction on {video_path}")
+
+    # ------------------------------------------------------------------
+    # Configure TensorFlow GPU/CPU visibility based on tf_cpu_only flag
+    try:
+        import tensorflow as tf
+        if tf_cpu_only:
+            tf.config.set_visible_devices([], 'GPU')
+            logging.info("TensorFlow forced to CPU mode for feature extraction")
+        else:
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                for gpu in gpus:
+                    try:
+                        tf.config.experimental.set_memory_growth(gpu, True)
+                    except RuntimeError as err:
+                        logging.warning(f"TF GPU memory growth failed: {err}")
+                logging.info("TensorFlow will use %d GPU(s) for feature extraction", len(gpus))
+            else:
+                logging.info("No TensorFlow GPU detected; feature extraction will run on CPU")
+    except Exception as e:
+        logging.warning(f"TensorFlow configuration error: {e}")
     
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)

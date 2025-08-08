@@ -105,7 +105,15 @@ class NvDecFrameFetcher(AbstractFrameFetcher):
 
         try:
             # Sử dụng DLPack để chuyển đổi zero-copy hiệu quả.
-            frame_tensor = torch.from_dlpack(frame)
+            # Convert the surface to a torch tensor via DLPack. The tensor returned by PyNvVideoCodec
+            # shares underlying GPU memory with the decoded surface. Once the surface object is released
+            # or reused by the decoder, that memory region may become invalid which can later lead to
+            # hard-to-debug "CUDA illegal memory access" errors when the tensor is used by PyTorch.
+            #
+            # To decouple the tensor from the decoder lifecycle we immediately clone it so that the data
+            # is copied into a brand-new GPU allocation that is fully owned by PyTorch. This adds a tiny
+            # bit of overhead but guarantees memory safety for subsequent processing steps.
+            frame_tensor = torch.from_dlpack(frame).clone()
 
             # Giả định định dạng là YUV (ví dụ: NV12), kênh đầu tiên (Y) là kênh grayscale.
             if frame_tensor.dim() == 2 and frame_tensor.shape[0] == int(self.height * 1.5):

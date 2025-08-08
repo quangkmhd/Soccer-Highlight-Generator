@@ -154,16 +154,31 @@ def predict_on_video(video_path: Path,action_model_path: Path,ball_action_model_
     source_fps = video_info['fps']
     num_frames = video_info['frame_count']
 
-    action_predictor = MultiDimStackerPredictor(action_model_path, device=f"cuda:{gpu_id}")
+    # Enable cuDNN benchmark for better performance when using GPU
+    if gpu_id >= 0 and torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        logger.info("Enabled cuDNN benchmark for GPU optimization")
+
+    # Process Ball-Action model first to free GPU memory afterwards
     ball_action_predictor = MultiDimStackerPredictor(ball_action_model_path, device=f"cuda:{gpu_id}")
 
     logger.info(f"Processing video with {source_fps}fps, targeting {target_fps}fps for predictions")
 
     ball_action_frame_indexes, ball_action_raw_preds, ball_action_predict_index2original = get_raw_predictions(
         ball_action_predictor, video_path, num_frames, source_fps, "Ball-Action Model", batch_size, target_fps)
-   
+
+    # Free GPU memory occupied by the ball-action model before loading the action model
+    del ball_action_predictor
+    torch.cuda.empty_cache()
+
+    action_predictor = MultiDimStackerPredictor(action_model_path, device=f"cuda:{gpu_id}")
+
     action_frame_indexes, action_raw_preds, action_predict_index2original = get_raw_predictions(
         action_predictor, video_path, num_frames, source_fps, "Action Model", batch_size, target_fps)
+
+    # Release the action predictor and clear GPU cache to free memory before further processing
+    del action_predictor
+    torch.cuda.empty_cache()
 
 
     all_predictions = []

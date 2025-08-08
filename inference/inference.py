@@ -144,7 +144,8 @@ def run_camera_prediction(video_path: Path, config: dict, output_dir: Path) -> P
             confidence_threshold=params['confidence_threshold'],
             pca_file=str(pca_file),
             scaler_file=str(scaler_file),
-            num_classes_type=13  
+            num_classes_type=13,
+            tf_cpu_only=params.get('tf_cpu_only', False)  
         )
         
         output_path = Path(output_file)

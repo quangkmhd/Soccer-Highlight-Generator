@@ -12,7 +12,7 @@ models:
 # Ball Action & Action Model Parameters
 ball_action_params:
   gpu_id: 0
-  batch_size: 3
+  batch_size: 6
   target_fps: 25.0
 
 # Camera Model Parameters
@@ -22,7 +22,7 @@ camera_params:
   batch_size_feat: 128
   backend: "TF2"
   confidence_threshold: 0.2
-
+  tf_cpu_only: false 
 # Rules Configuration
 rules:
   config_path: "rules/config.yaml"  # Đường dẫn tương đối từ thư mục gốc
