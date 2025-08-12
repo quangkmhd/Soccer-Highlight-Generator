@@ -45,7 +45,7 @@ class VideoFeatureExtractor:
 
         base_model = keras.applications.resnet.ResNet152(
             include_top=True,
-            weights='/home/qmask_quangnh58/soccer_highlight/CALF-segmentation/Features/resnet152_weights_tf_dim_ordering_tf_kernels.h5',
+            weights='/home/qmask_quangnh58/soccer_highlight/CALF_segmentation/Features/resnet152_weights_tf_dim_ordering_tf_kernels.h5',
             input_tensor=None,
             input_shape=None,
             pooling=None,
