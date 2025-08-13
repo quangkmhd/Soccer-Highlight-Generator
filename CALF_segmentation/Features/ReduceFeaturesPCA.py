@@ -95,21 +95,30 @@ if __name__ == "__main__":
 
     parser.add_argument('--soccernet_dirpath', type=str, default="/media/giancos/Football/SoccerNet/",
                         help="Path for SoccerNet directory [default:/media/giancos/Football/SoccerNet/]")
-    parser.add_argument('--features', type=str, default="ResNET_TF2.npy",
-                        help="features to perform PCA on [default:ResNET_TF2.npy]")    
-    parser.add_argument('--features_PCA', type=str, default="ResNET_TF2_PCA512.npy",
-                        help="name of reduced features [default:ResNET_TF2_PCA512.npy]")
-    parser.add_argument('--pca_file', type=str, default="pca_512_TF2.pkl",
-                        help="pickle for PCA [default:pca_512_TF2.pkl]")
-    parser.add_argument('--scaler_file', type=str, default="average_512_TF2.pkl",
-                        help="pickle for average [default:average_512_TF2.pkl]")
+    parser.add_argument('--features', type=str, default="ResNET_PT.npy",
+                        help="features to perform PCA on [default:ResNET_PT.npy]")    
+    parser.add_argument('--features_PCA', type=str, default="ResNET_PT_PCA512.npy",
+                        help="name of reduced features [default:ResNET_PT_PCA512.npy]")
+    parser.add_argument('--pca_file', type=str, default="pca_512_PT.pkl",
+                        help="pickle for PCA [default:pca_512_PT.pkl]")
+    parser.add_argument('--scaler_file', type=str, default="average_512_PT.pkl",
+                        help="pickle for average [default:average_512_PT.pkl]")
     parser.add_argument('--dim_reduction', type=int, default=512,
                         help="dimension reduction [default:512]")
+    parser.add_argument('--back_end', type=str, default="PT",
+                        help="Backend TF2 or PT [default:PT]")
 
     parser.add_argument('--overwrite', action="store_true",
                         help="Overwrite the features? [default:False]")
 
     args = parser.parse_args()
+
+    # Automatically set file names based on the backend
+    args.features = f"ResNET_{args.back_end}.npy"
+    args.features_PCA = f"ResNET_{args.back_end}_PCA{args.dim_reduction}.npy"
+    args.pca_file = f"pca_{args.dim_reduction}_{args.back_end}.pkl"
+    args.scaler_file = f"average_{args.dim_reduction}_{args.back_end}.pkl"
+
     print(args)
 
     main(args)

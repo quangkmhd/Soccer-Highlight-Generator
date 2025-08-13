@@ -1,5 +1,5 @@
 import argparse
-import os 
+import os
 import SoccerNet
 
 
@@ -15,6 +15,28 @@ try:
 except:
     print("issue loading TF2")
     pass
+
+try:
+    import torch
+    import torchvision.models as models
+    import torchvision.transforms as transforms
+    from PIL import Image
+except:
+    print("issue loading PT")
+    torch = None
+
+# Import NVDEC frame loader
+try:
+    from FrameNVDEC import FrameNVDEC, is_nvdec_available, create_frame_loader, get_frames_from_loader
+    NVDEC_AVAILABLE = True
+except ImportError:
+    FrameNVDEC = None
+    is_nvdec_available = lambda: False
+    create_frame_loader = None
+    get_frames_from_loader = None
+    NVDEC_AVAILABLE = False
+    print("FrameNVDEC not available; NVDEC grabber will be disabled.")
+
 import os
 # import argparse
 import numpy as np
@@ -35,7 +57,7 @@ class FeatureExtractor():
     def __init__(self, rootFolder,
                  feature="ResNET",
                  video="LQ",
-                 back_end="TF2",
+                 back_end="PT",
                  overwrite=False,
                  transform="crop",
                  tmp_HQ_videos=None,
@@ -72,6 +94,22 @@ class FeatureExtractor():
             self.model = Model(base_model.input,
                                outputs=[base_model.get_layer("avg_pool").output])
             self.model.trainable = False
+
+        elif "PT" in self.back_end:
+            self.device = torch.device("cuda")
+            self.model = models.resnet152(weights=models.ResNet152_Weights.IMAGENET1K_V2)
+            self.extraction_layer = self.model.avgpool
+            self.model.eval()
+            self.model = self.model.to(self.device)
+
+            # Standard PyTorch normalization for ImageNet
+            self.transform_PT = transforms.Compose([
+                transforms.ToPILImage(),
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
 
     def extractAllGames(self):
         list_game = getListGames(self.split)
@@ -129,34 +167,137 @@ class FeatureExtractor():
 
         if os.path.exists(feature_path) and not self.overwrite:
             return
+        
+        features = None
         if "TF2" in self.back_end:
-            
-            if self.grabber=="skvideo":
-                videoLoader = Frame(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
-            elif self.grabber=="opencv":
-                videoLoader = FrameCV(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
 
-            # create numpy aray (nb_frames x 224 x 224 x 3)
-            # frames = np.array(videoLoader.frames)
-            # if self.preprocess:
-            frames = preprocess_input(videoLoader.frames)
-            
+            # Create video loader using factory function
+            if NVDEC_AVAILABLE and create_frame_loader:
+                videoLoader = create_frame_loader(video_path, grabber=self.grabber,
+                                                FPS=self.FPS, transform=self.transform,
+                                                start=start, duration=duration)
+            else:
+                # Fallback to traditional loaders
+                if self.grabber=="skvideo":
+                    videoLoader = Frame(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+                elif self.grabber=="opencv":
+                    videoLoader = FrameCV(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+                else:
+                    print(f"Grabber {self.grabber} not supported without NVDEC; falling back to OpenCV.")
+                    videoLoader = FrameCV(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+
+            # Get frames using unified interface
+            try:
+                if NVDEC_AVAILABLE and get_frames_from_loader:
+                    raw_frames = get_frames_from_loader(videoLoader)
+                else:
+                    # Traditional interface
+                    raw_frames = videoLoader.frames if hasattr(videoLoader, 'frames') else []
+
+                # Check if frames are available
+                if len(raw_frames) == 0:
+                    print(f"Warning: No frames found in video {video_path}")
+                    return
+
+                # create numpy array (nb_frames x 224 x 224 x 3)
+                frames = preprocess_input(raw_frames)
+
+                if duration is None:
+                    duration = videoLoader.time_second
+                    # time_second = duration
+                if self.verbose:
+                    print("frames", frames.shape, "fps=", frames.shape[0]/duration)
+
+                # predict the features from the frames (adjust batch size for smaller GPU)
+                features = self.model.predict(frames, batch_size=64, verbose=1)
+                if self.verbose:
+                    print("features", features.shape, "fps=", features.shape[0]/duration)
+
+            except Exception as e:
+                print(f"Error processing frames with TF2: {e}")
+                return
+
+
+
+        elif "PT" in self.back_end:
+            # Create video loader using factory function
+            if NVDEC_AVAILABLE and create_frame_loader:
+                videoLoader = create_frame_loader(video_path, grabber=self.grabber,
+                                                FPS=self.FPS, transform=self.transform,
+                                                start=start, duration=duration)
+            else:
+                # Fallback to traditional loaders
+                if self.grabber=="skvideo":
+                    videoLoader = Frame(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+                elif self.grabber=="opencv":
+                    videoLoader = FrameCV(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+                else:
+                    print(f"Grabber {self.grabber} not supported without NVDEC; falling back to OpenCV.")
+                    videoLoader = FrameCV(video_path, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+
             if duration is None:
                 duration = videoLoader.time_second
-                # time_second = duration
-            if self.verbose:
-                print("frames", frames.shape, "fps=", frames.shape[0]/duration)
 
-            # predict the featrues from the frames (adjust batch size for smalled GPU)
-            features = self.model.predict(frames, batch_size=64, verbose=1)
+            # Get frames using unified interface
+            try:
+                if NVDEC_AVAILABLE and get_frames_from_loader:
+                    raw_frames = get_frames_from_loader(videoLoader)
+                else:
+                    # Traditional interface
+                    raw_frames = videoLoader.frames if hasattr(videoLoader, 'frames') else []
+
+                # Check if frames are available
+                if len(raw_frames) == 0:
+                    print(f"Warning: No frames found in video {video_path}")
+                    return
+
+                all_features = []
+
+                # Hook function to get the output from the avgpool layer
+                def hook(module, input, output):
+                    all_features.append(output.cpu().numpy().squeeze())
+
+                handle = self.extraction_layer.register_forward_hook(hook)
+
+                # Process frames in batches to avoid OOM
+                batch_size = 64
+                for i in tqdm(range(0, len(raw_frames), batch_size)):
+                    frame_batch = raw_frames[i:i+batch_size]
+
+                    # Convert BGR (from cv2) to RGB and apply transform
+                    # For NVDEC frames are already RGB, for OpenCV they are BGR
+                    if NVDEC_AVAILABLE and isinstance(videoLoader, FrameNVDEC):
+                        # NVDEC frames are already RGB numpy arrays
+                        frame_batch_transformed = [self.transform_PT(frame) for frame in frame_batch]
+                    else:
+                        # OpenCV frames are BGR, convert to RGB
+                        frame_batch_transformed = [self.transform_PT(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frame_batch]
+
+                    batch = torch.stack(frame_batch_transformed, dim=0).to(self.device)
+
+                    with torch.no_grad():
+                        self.model(batch)
+
+                handle.remove()
+                # Concatenate batch outputs to shape (num_frames, 2048)
+                if len(all_features) > 0:
+                    features = np.concatenate(all_features, axis=0)
+                else:
+                    features = np.empty((0, 2048), dtype=np.float32)
+
+            except Exception as e:
+                print(f"Error processing frames: {e}")
+                return
+            
             if self.verbose:
                 print("features", features.shape, "fps=", features.shape[0]/duration)
 
-
-
         # save the featrue in .npy format
-        os.makedirs(os.path.dirname(feature_path), exist_ok=True)
-        np.save(feature_path, features)
+        if features is not None:
+            os.makedirs(os.path.dirname(feature_path), exist_ok=True)
+            np.save(feature_path, features)
+        else:
+            raise ValueError(f"Unsupported backend: {self.back_end}. Features could not be extracted.")
 
 
 
@@ -178,8 +319,8 @@ if __name__ == "__main__":
                         help="ID of the game from which to extract features. If set to None, then loop over all games. [default:None]")
 
     # feature setup
-    parser.add_argument('--back_end', type=str, default="TF2",
-                        help="Backend TF2 or PT [default:TF2]")
+    parser.add_argument('--back_end', type=str, default="PT",
+                        help="Backend TF2 or PT [default:PT]")
     parser.add_argument('--features', type=str, default="ResNET",
                         help="ResNET or R25D [default:ResNET]")
     parser.add_argument('--transform', type=str, default="crop",
@@ -187,7 +328,7 @@ if __name__ == "__main__":
     parser.add_argument('--video', type=str, default="LQ",
                         help="LQ or HQ? [default:LQ]")
     parser.add_argument('--grabber', type=str, default="opencv",
-                        help="skvideo or opencv? [default:opencv]")
+                        help="skvideo, opencv, or nvdec? [default:opencv]")
     parser.add_argument('--tmp_HQ_videos', type=str, default=None,
                         help="enter pawssword to download and store temporally the videos [default:None]")
     parser.add_argument('--FPS', type=float, default=2.0,
