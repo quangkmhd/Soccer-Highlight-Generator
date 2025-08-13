@@ -15,18 +15,21 @@ ball_action_params:
   batch_size: 6
   target_fps: 25.0
 
-# Camera Model Parameters
+# Camera Model Parameters (PyTorch version)
 camera_params:
   gpu_id: 0
   fps: 2.0
-  batch_size_feat: 128
-  backend: "TF2"
+  batch_size_feat: 64
   confidence_threshold: 0.2
-  tf_cpu_only: false 
+  chunk_size: 48
+  receptive_field: 16
+  num_detections: 45
+  overwrite: true
+  transform: "crop"
+  grabber: "opencv" 
 # Rules Configuration
 rules:
   config_path: "rules/config.yaml"  # Đường dẫn tương đối từ thư mục gốc
-  limit: 80  # Số lượng highlight tối đa
 
 # Video Clipping
 clipping:

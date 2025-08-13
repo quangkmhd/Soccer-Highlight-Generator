@@ -19,12 +19,9 @@ def process_highlights(prediction_data: dict, config: dict) -> list:
 
     extractor = HighlightExtractor(prediction_data, config=config)
     all_highlights = extractor.run()
-    print(f"[INFO] Found {len(all_highlights)} potential highlights after applying rules.")
-    
-    # Rank and filter highlights
-    limit = int(config['limit'])
-    top_highlights = rank_and_finalize_highlights(all_highlights, config=config, limit=limit)
-    print(f"[INFO] Selected the top {len(top_highlights)} highlights.")
+    # Rank highlights
+    top_highlights = rank_and_finalize_highlights(all_highlights, config=config)
+    print(f"[INFO] Ranked {len(top_highlights)} highlights.")
     
     return top_highlights
 
@@ -38,19 +35,16 @@ def main():
     parser = argparse.ArgumentParser(description="Extract and save top highlights from prediction data.")
     parser.add_argument(
         "--predictions-json-path",
-        type=Path,
-        help="Path to the prediction JSON file. Overrides path from config."
+        type=Path
     )
     parser.add_argument(
         "--output-dir",
-        type=Path,
-        help="Output directory for the top highlights JSON file. Overrides path from config."
+        type=Path
     )
     parser.add_argument(
         "--config",
         type=Path,
-        default='rules/config.yaml',
-        help="Path to the rules configuration YAML file."
+        default='rules/config.yaml'
     )
     args = parser.parse_args()
 
@@ -59,8 +53,6 @@ def main():
     predictions_path = args.predictions_json_path or rules_config.get('predictions_json_path')
     output_dir = args.output_dir or rules_config.get('output_dir')
 
-
-    # Ensure paths are Path objects
     predictions_path = Path(predictions_path)
     output_dir = Path(output_dir)
 
@@ -69,8 +61,7 @@ def main():
     top_highlights = process_highlights(prediction_data, rules_config)
     
     video_basename = Path(prediction_data.get('UrlLocal', predictions_path.stem)).stem
-    limit = len(top_highlights)
-    output_file = output_dir / f"{video_basename}_top_{limit}_highlights.json"
+    output_file = output_dir / f"{video_basename}_highlights.json"
     
     save_top_highlights(top_highlights, output_file)
 

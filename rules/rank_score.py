@@ -37,17 +37,7 @@ def calculate_highlight_score(
     events: List[Dict[str, Any]], 
     scoring_config: Optional[Dict[str, Any]] = None
 ) -> int:
-    """Calculate highlight score based on title, confidence and camera events.
-    
-    Args:
-        title: Event title (e.g., 'Goal', 'Penalty', 'Corner')
-        confidence: Confidence score (0.0 to 1.0)
-        events: List of camera/context events with labels
-        scoring_config: Optional custom scoring configuration
-    
-    Returns:
-        Calculated score (0 to MAX_SCORE)
-    """
+
     if scoring_config is None:
         scoring_config = _scoring
     
