@@ -20,16 +20,10 @@ def time_str_to_seconds(time_str):
 
 def create_clips_from_json(json_path, video_path, output_dir, rules_config_path=None):
 
-    if not os.path.exists(video_path):
-        logging.error(f"Video file not found at: {video_path}")
-        return
 
-    try:
-        with open(json_path, 'r', encoding='utf-8') as f:
-            highlights = json.load(f)
-    except FileNotFoundError:
-        logging.error(f"JSON file not found at: {json_path}")
-        return
+    with open(json_path, 'r', encoding='utf-8') as f:
+        highlights = json.load(f)
+
 
     video_name = os.path.splitext(os.path.basename(video_path))[0]
     # Use a subdirectory within the main output dir for clips of this video
@@ -89,14 +83,9 @@ def create_clips_from_json(json_path, video_path, output_dir, rules_config_path=
 
 
 
-        try:
-            # logging.info(f"Executing command: {' '.join(ffmpeg_command)}")
-            subprocess.run(ffmpeg_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logging.info(f"Successfully created clip: {os.path.basename(output_filepath)}")
-        except subprocess.CalledProcessError as e:
-            logging.error(f"Error creating clip {output_filepath}: {e}")
-        except Exception as e:
-            logging.error(f"An unexpected error occurred: {e}")
+
+        subprocess.run(ffmpeg_command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logging.info(f"Successfully created clip: {os.path.basename(output_filepath)}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Cut video clips based on a JSON file of highlights.")

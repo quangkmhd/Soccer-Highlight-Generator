@@ -9,15 +9,11 @@ from pathlib import Path
 import numpy as np
 import torch
 
-# Thiết lập đường dẫn để tìm các module trong CALF_segmentation
 current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(str(current_dir))
-sys.path.append(str(current_dir / "src"))  # Thêm đường dẫn đến thư mục src
-sys.path.append(str(current_dir / "Features"))  # Thêm đường dẫn đến thư mục Features
+sys.path.append(str(current_dir / "src"))  
+sys.path.append(str(current_dir / "Features"))  
 
-# TensorFlow no longer needed - using PyTorch backend exclusively
-
-# Import sau khi đã thiết lập đường dẫn
 from Features.VideoFeatureExtractor import VideoFeatureExtractor, PCAReducer
 from .src.model import Model  
 
@@ -48,17 +44,16 @@ def extract_features(video_path: str,
                      pca_file: str = None,
                      scaler_file: str = None) -> np.ndarray:
     if os.path.exists(feature_path) and not overwrite:
-        logging.info("File feature already exists, load directly: %s", feature_path)
         return np.load(feature_path)
 
     # Kiểm tra tồn tại của file PCA và scaler trước khi tiếp tục
     if pca_file is not None and not os.path.exists(pca_file):
-        error_msg = f"PCA file not found: {pca_file}. Feature extraction cannot proceed without PCA file."
+        error_msg = f"PCA file not found: {pca_file}."
         logging.error(error_msg)
         raise FileNotFoundError(error_msg)
     
     if scaler_file is not None and not os.path.exists(scaler_file):
-        error_msg = f"Scaler file not found: {scaler_file}. Feature extraction cannot proceed without scaler file."
+        error_msg = f"Scaler file not found: {scaler_file}."
         logging.error(error_msg)
         raise FileNotFoundError(error_msg)
 
@@ -78,11 +73,8 @@ def extract_features(video_path: str,
 
 def run_inference(features: np.ndarray,model_path: str,device: torch.device,fps: float,num_classes_type: int = 13,chunk_size: int = 48,receptive_field: int = 16,num_detections: int = 45) -> np.ndarray:
 
-    # Use fixed input_size=512 since features are extracted from ResNet layer2 (512 dims)
     input_size = 512
-    logging.info(f"Using input_size={input_size}, actual feature dimensions: {features.shape[1]}")
     
-    # Check if feature dimensions match expected input_size
     if features.shape[1] != input_size:
         raise ValueError(f"Feature dimensions {features.shape[1]} don't match expected input_size {input_size}. ResNet layer2 should output 512 dims.")
     
@@ -95,8 +87,6 @@ def run_inference(features: np.ndarray,model_path: str,device: torch.device,fps:
         framerate=int(fps),
     ).to(device)
 
-    logging.info(f"Inference will run on device: {device} (model parameters on {next(model.parameters()).device})")
-
     state = torch.load(model_path, map_location=device)
     model.load_state_dict(state['state_dict'])
     model.eval()
@@ -105,7 +95,6 @@ def run_inference(features: np.ndarray,model_path: str,device: torch.device,fps:
     with torch.no_grad():
         for start in range(0, len(features), chunk_size):
             chunk = features[start:start + chunk_size]
-            # pad with 0 to avoid repeating last vector
             if len(chunk) < chunk_size:
                 pad_len = chunk_size - len(chunk)
                 chunk = np.pad(chunk, ((0, pad_len), (0, 0)), mode='constant')
@@ -170,12 +159,10 @@ def camera_predict_on_video(
     overwrite: bool = True,
  ) -> str:
     
-    logging.info(f"Running camera prediction on {video_path}")
     
-    # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
-    # Setup device for PyTorch
+    device = torch.device(f"cuda:{gpu_id}" if gpu_id >= 0 and torch.cuda.is_available() else "cpu")
     device = torch.device(f"cuda:{gpu_id}" if gpu_id >= 0 and torch.cuda.is_available() else "cpu")
     device_str = f"cuda:{gpu_id}" if gpu_id >= 0 and torch.cuda.is_available() else "cpu"
     if device.type == 'cuda':

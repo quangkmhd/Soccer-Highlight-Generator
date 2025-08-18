@@ -109,7 +109,6 @@ class VideoFeatureExtractor():
         logging.info(f"extracting features for video {path_video_input}")
 
         if os.path.exists(path_features_output) and not overwrite:
-            logging.info("Features already exists, use overwrite=True to overwrite them. Exiting.")
             return
         # if "TF2" in self.back_end:
         #     if self.grabber == "opencv":

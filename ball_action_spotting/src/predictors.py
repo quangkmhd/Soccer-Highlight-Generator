@@ -9,7 +9,7 @@ import argus
 
 from src.indexes import StackIndexesGenerator
 from src.frames import get_frames_processor
-import torch.cuda.amp
+
 
 
 def batched(iterable: Iterable, size: int):

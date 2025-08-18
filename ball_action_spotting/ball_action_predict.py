@@ -1,4 +1,3 @@
-
 import argparse
 import json
 import logging
@@ -10,7 +9,6 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
-# Thiết lập đường dẫn để tìm các module trong ball_action_spotting
 current_dir = Path(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(str(current_dir))
 sys.path.append(str(current_dir / "src"))  # Thêm đường dẫn đến thư mục src
@@ -77,7 +75,6 @@ def get_raw_predictions(predictor: MultiDimStackerPredictor,
             for frame_index in original_indices_batch:
                 frame = frame_fetcher.fetch_frame(frame_index)
                 if frame is None:
-                    logger.info(f"Cannot read frame {frame_index}. Maybe reached the end of video.")
                     break
                 batch_frames.append(frame)
                 valid_original_indices.append(frame_index)
@@ -106,7 +103,6 @@ def get_raw_predictions(predictor: MultiDimStackerPredictor,
                 
                 if predict_index >= max_frame_index:
                     has_reached_max = True
-                    logger.info(f"Reached max_frame_index ({max_frame_index}). Stop processing.")
                     break
             
             t.update(len(batch_frames))
