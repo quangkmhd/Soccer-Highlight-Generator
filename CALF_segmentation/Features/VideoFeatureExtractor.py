@@ -1,69 +1,57 @@
 import argparse
 import os
-import logging
-from typing import Optional, Generator
+import SoccerNet
 
+import logging
+
+import configparser
+import math
+# try:
+#     # pip install tensorflow (==2.3.0)
+#     from tensorflow.keras.models import Model
+#     from tensorflow.keras.applications.resnet import preprocess_input
+#     # from tensorflow.keras.preprocessing.image import img_to_array
+#     # from tensorflow.keras.preprocessing.image import load_img
+#     from tensorflow import keras
+# except:
+#     print("issue loading TF2")
+#     pass
+try:
+    import torch  # pip install torch
+    import torchvision.models as models
+    from torchvision import transforms
+    from torch.utils.data import DataLoader, Dataset
+except:
+    print("issue loading PT")
+    pass
+import os
+# import argparse
 import numpy as np
-import cv2
+import cv2  # pip install opencv-python (==3.4.11.41)
+import imutils  # pip install imutils
+import skvideo.io
+from tqdm import tqdm
 import pickle as pkl
+# from FrameNVDEC import FrameNVDEC  # pip install FrameNVDEC
+from sklearn.decomposition import PCA, IncrementalPCA  # pip install scikit-learn
+from sklearn.preprocessing import StandardScaler
+import json
+
+import random
+from SoccerNet.utils import getListGames
+from SoccerNet.Downloader import SoccerNetDownloader
 from SoccerNet.DataLoader import Frame, FrameCV
 
-# Import NVDEC frame loader
-try:
-    from FrameNVDEC import FrameNVDEC, is_nvdec_available, create_frame_loader, get_frames_from_loader
-    NVDEC_AVAILABLE = True
-except ImportError:
-    FrameNVDEC = None
-    is_nvdec_available = lambda: False
-    create_frame_loader = None
-    get_frames_from_loader = None
-    NVDEC_AVAILABLE = False
-    logging.warning("FrameNVDEC not available; NVDEC grabber will be disabled.")
 
-# Optional progress bar
-try:
-    from tqdm import tqdm
-except Exception:
-    tqdm = None
-
-try:
-    from tensorflow.keras.models import Model as TFModel
-    from tensorflow.keras.applications.resnet import preprocess_input as tf_preprocess
-    from tensorflow import keras
-    import tensorflow as tf
-except Exception:
-    logging.warning("TensorFlow not available; TF2 backend will fail.")
-
-try:
-    import torch
-    import torchvision.models as models
-    import torchvision.transforms as transforms
-    from PIL import Image
-except Exception:
-    models = None
-    transforms = None
-    Image = None
-    logging.warning("PyTorch models/transforms not available; PT backend will fail.")
-
-# PyTorch for tensor operations (used by NVDEC)
-try:
-    import torch
-except Exception:
-    torch = None
-    logging.warning("PyTorch not available; some features may be limited.")
-
-# FrameNVDEC class moved to separate file FrameNVDEC.py
-
-
-class VideoFeatureExtractor:
+class VideoFeatureExtractor():
     def __init__(self,
-                 feature: str = "ResNET",
-                 back_end: str = "PT",
-                 overwrite: bool = False,
-                 transform: str = "crop",
-                 grabber: str = "opencv",
-                 FPS: float = 2.0,
-                 split: str = "all"):
+                 feature="ResNET",
+                 back_end="PT",
+                 overwrite=False,
+                 transform="crop",
+                 grabber="opencv",
+                 FPS=2.0,
+                 split="all"):
 
         self.feature = feature
         self.back_end = back_end
@@ -74,249 +62,155 @@ class VideoFeatureExtractor:
         self.FPS = FPS
         self.split = split
 
-        if self.back_end == "TF2":
-            gpus = tf.config.list_physical_devices('GPU')
-            if gpus:
-                try:
-                    for gpu in gpus:
-                        tf.config.experimental.set_memory_growth(gpu, True)
-                except RuntimeError as e:
-                    logging.warning("TF GPU config error: %s", e)
 
-            # Resolve weights path: prefer host path, fallback to container path; else use 'imagenet'
-            weights_candidates = [
-                '/home/qmask_quangnh58/soccer_highlight/CALF_segmentation/Features/resnet152_weights_tf_dim_ordering_tf_kernels.h5',
-                '/app/CALF_segmentation/Features/resnet152_weights_tf_dim_ordering_tf_kernels.h5',
-            ]
+        # if "TF2" in self.back_end:
 
-            resolved_weights_path = None
-            for candidate in weights_candidates:
-                if os.path.exists(candidate):
-                    resolved_weights_path = candidate
-                    break
+        #     # create pretrained encoder (here ResNet152, pre-trained on ImageNet)
+        #     base_model = keras.applications.resnet.ResNet152(include_top=True,
+        #                                                      weights='imagenet',
+        #                                                      input_tensor=None,
+        #                                                      input_shape=None,
+        #                                                      pooling=None,
+        #                                                      classes=1000)
 
-            if resolved_weights_path is None:
-                logging.warning(
-                    "ResNet152 weights not found at expected paths; falling back to 'imagenet'."
-                )
-                weights_arg = 'imagenet'
-            else:
-                logging.info("Using ResNet152 weights from: %s", resolved_weights_path)
-                weights_arg = resolved_weights_path
-            # keep for potential CPU rebuild
-            self._weights_arg = weights_arg
+        #     # define model with output after polling layer (dim=2048)
+        #     self.model = Model(base_model.input,
+        #                        outputs=[base_model.get_layer("avg_pool").output])
+        #     self.model.trainable = False
 
-            try:
-                base_model = keras.applications.resnet.ResNet152(
-                    include_top=True,
-                    weights=weights_arg,
-                    input_tensor=None,
-                    input_shape=None,
-                    pooling=None,
-                    classes=1000)
-            except Exception as e:
-                logging.warning("ResNet152 init failed on default device (%s). Retrying on CPU...", e)
-                with tf.device('/CPU:0'):
-                    base_model = keras.applications.resnet.ResNet152(
-                        include_top=True,
-                        weights=weights_arg,
-                        input_tensor=None,
-                        input_shape=None,
-                        pooling=None,
-                        classes=1000)
-            
-            self.model = TFModel(base_model.input,
-                                 outputs=[base_model.get_layer("avg_pool").output])
-            self.model.trainable = False
-
-        elif self.back_end == "PT":
-            if models is None or transforms is None:
-                raise ImportError("PyTorch/Torchvision is required for the PT backend.")
+        if "PT" in self.back_end:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            try:
-                # Try modern PyTorch weights API first
-                self.model = models.resnet152(weights=models.ResNet152_Weights.IMAGENET1K_V2)
-            except AttributeError:
-                # Fallback for older PyTorch versions
-                self.model = models.resnet152(pretrained=True)
-            self.extraction_layer = self.model.avgpool
+            resnet = models.resnet152(weights=models.ResNet152_Weights.IMAGENET1K_V2).to(self.device)
+
+            # Tương đương với avg_pool trong TF2
+            self.model = torch.nn.Sequential(
+                resnet.conv1,
+                resnet.bn1,
+                resnet.relu,
+                resnet.maxpool,
+                resnet.layer1,
+                resnet.layer2,
+                resnet.layer3,
+                resnet.layer4,
+                resnet.avgpool,      # (B, 2048, 1, 1)
+                torch.nn.Flatten()   # (B, 2048)
+            ).to(self.device)
+
             self.model.eval()
-            self.model = self.model.to(self.device)
-
-            self.transform_PT = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
+            self.preprocess = transforms.Compose([
+                transforms.ToPILImage(),  # Convert numpy array to PIL Image first
+                transforms.Resize((224, 224)),
                 transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ])
-        else:
-            raise ValueError(f"Unsupported backend: {self.back_end}")
 
-    def _predict_with_fallback(self, frames_tf: np.ndarray, batch_size: int = 64):
-        """Run prediction; on GPU failure, retry on CPU transparently."""
-        try:
-            return self.model.predict(frames_tf, batch_size=batch_size, verbose=1)
-        except Exception as e:
-            logging.warning("Prediction on default device failed (%s). Rebuilding model on CPU and retrying...", e)
-            try:
-                # Rebuild model on CPU to avoid any GPU kernels
-                with tf.device('/CPU:0'):
-                    base_model = keras.applications.resnet.ResNet152(
-                        include_top=True,
-                        weights=self._weights_arg,
-                        input_tensor=None,
-                        input_shape=None,
-                        pooling=None,
-                        classes=1000)
-                    self.model = TFModel(base_model.input,
-                                         outputs=[base_model.get_layer("avg_pool").output])
-                    self.model.trainable = False
-                    return self.model.predict(frames_tf, batch_size=batch_size, verbose=1)
-            except Exception as e2:
-                logging.error("Prediction failed after CPU rebuild: %s", e2)
-                raise
+        
+    def extractFeatures(self, path_video_input, path_features_output, start=None, duration=None, overwrite=False):
+        logging.info(f"extracting features for video {path_video_input}")
 
-    def resize_with_padding(self, frame, target_size=(224, 224)):
-        h, w = frame.shape[:2]
-        target_h, target_w = target_size
-        scale = min(target_w / w, target_h / h)
-        new_w, new_h = int(w * scale), int(h * scale)
-        resized = cv2.resize(frame, (new_w, new_h))
-        canvas = np.zeros((target_h, target_w, 3), dtype=np.uint8)
-        start_x = (target_w - new_w) // 2
-        start_y = (target_h - new_h) // 2
-        canvas[start_y:start_y + new_h, start_x:start_x + new_w] = resized
-        return canvas
-
-    def process_frames(self, frames, target_size=(224, 224)):
-        processed = []
-        for f in frames:
-            processed.append(self.resize_with_padding(f, target_size))
-        return np.array(processed)
-
-    def extractFeatures(self, path_video_input, path_features_output,
-                        start=None, duration=None, overwrite=False):
-        logging.info(f"Extracting features for video {path_video_input}")
         if os.path.exists(path_features_output) and not overwrite:
-            logging.info("Features already exist, use overwrite=True to overwrite.")
+            logging.info("Features already exists, use overwrite=True to overwrite them. Exiting.")
             return
-        logging.info("FrameCV...")
-        print(self.grabber)
-        # Create video loader using factory function
-        if NVDEC_AVAILABLE and create_frame_loader:
-            videoLoader = create_frame_loader(path_video_input, grabber=self.grabber,
-                                            FPS=self.FPS, transform=self.transform,
-                                            start=start, duration=duration)
-        else:
-            # Fallback to traditional loaders
-            if self.grabber == "skvideo":
-                videoLoader = Frame(path_video_input, FPS=self.FPS,
-                                    transform=self.transform, start=start, duration=duration)
-            elif self.grabber == "opencv":
-                videoLoader = FrameCV(path_video_input, FPS=self.FPS,
-                                      transform=self.transform, start=start, duration=duration)
-            else:
-                logging.warning(f"Grabber {self.grabber} not supported without NVDEC; falling back to OpenCV.")
-                videoLoader = FrameCV(path_video_input, FPS=self.FPS,
-                                      transform=self.transform, start=start, duration=duration)
+        # if "TF2" in self.back_end:
+        #     if self.grabber == "opencv":
+        #         videoLoader = FrameCV(
+        #             path_video_input, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+        #     # elif self.grabber == "nvdec":
+        #     #     videoLoader = FrameNVDEC(
+        #     #         path_video_input, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+        #     frames = preprocess_input(videoLoader.frames)
 
-        logging.info("process_frames...")
+        #     if duration is None:
+        #         duration = videoLoader.time_second
 
-        # Get frames using unified interface
-        try:
-            if NVDEC_AVAILABLE and get_frames_from_loader:
-                raw_frames = get_frames_from_loader(videoLoader)
-            else:
-                # Traditional interface
-                raw_frames = videoLoader.frames if hasattr(videoLoader, 'frames') else []
-        except Exception as e:
-            # Ensure cleanup even if error occurs
-            if hasattr(videoLoader, 'cleanup'):
-                videoLoader.cleanup()
-            raise e
+        #     logging.info(f"frames {frames.shape}, fps={frames.shape[0]/duration}")
+
+        #     # predict the features from the frames (adjust batch size for smaller GPU)
+        #     features = self.model.predict(frames, batch_size=64, verbose=1)
+
+        #     logging.info(f"features {features.shape}, fps={features.shape[0]/duration}")
+
+        if "PT" in self.back_end:
+            if self.grabber == "opencv":
+                videoLoader = FrameCV(
+                    path_video_input, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+            # elif self.grabber == "nvdec":
+            #     videoLoader = FrameNVDEC(
+            #         path_video_input, FPS=self.FPS, transform=self.transform, start=start, duration=duration)
+
+            if duration is None:
+                duration = videoLoader.time_second
+
+            class FrameDataset(Dataset):
+                def __init__(self, frames, transform=None):
+                    self.frames = frames
+                    self.transform = transform
+
+                def __len__(self):
+                    return len(self.frames)
+
+                def __getitem__(self, idx):
+                    frame = cv2.cvtColor(self.frames[idx], cv2.COLOR_BGR2RGB)  # Convert to RGB for PIL
+                    if self.transform:
+                        frame = self.transform(frame)
+                    return frame
+
+            dataset = FrameDataset(videoLoader.frames, transform=self.preprocess)
+            data_loader = DataLoader(dataset, batch_size=64, shuffle=False, num_workers=0)
+
+            features = []
+            with torch.no_grad():
+                for batch in tqdm(data_loader):
+                    batch = batch.to(self.device)
+                    output = self.model(batch)
+                    # Handle both single sample and batch outputs
+                    if output.dim() == 1:  # Single sample
+                        output = output.unsqueeze(0)
+                    features.append(output.cpu().numpy())
             
-        features = None
-        if self.back_end == "TF2":
-            # Check if frames are available
-            if len(raw_frames) == 0:
-                logging.warning(f"No frames found in video {path_video_input}")
-                return
-                
-            processed = self.process_frames(raw_frames, target_size=(224, 224))
-            frames_tf = tf_preprocess(processed)
-            logging.info("Predicting with TensorFlow...")
-            features = self._predict_with_fallback(frames_tf, batch_size=64)
+            features = np.concatenate(features, axis=0)
+            logging.info(f"features {features.shape}, fps={features.shape[0]/duration}")
 
-        elif self.back_end == "PT":
-            logging.info("Predicting with PyTorch...")
-            
-            # Check if frames are available
-            if len(raw_frames) == 0:
-                logging.warning(f"No frames found in video {path_video_input}")
-                return
-            
-            all_features = []
-            
-            def hook(module, input, output):
-                all_features.append(output.cpu().numpy().squeeze())
-
-            handle = self.extraction_layer.register_forward_hook(hook)
-
-            batch_size = 64
-            pbar_pt = tqdm(total=len(raw_frames), desc="PyTorch Inference") if tqdm else None
-            
-            for i in range(0, len(raw_frames), batch_size):
-                frame_batch = raw_frames[i:i+batch_size]
-                
-                frame_batch_transformed = [self.transform_PT(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)) for frame in frame_batch]
-                
-                batch = torch.stack(frame_batch_transformed, dim=0).to(self.device)
-
-                with torch.no_grad():
-                    self.model(batch)
-                
-                if pbar_pt:
-                    pbar_pt.update(len(frame_batch))
-            
-            if pbar_pt:
-                pbar_pt.close()
-
-            handle.remove()
-            # Concatenate batch outputs to shape (num_frames, 2048)
-            if len(all_features) > 0:
-                features = np.concatenate(all_features, axis=0)
-            else:
-                features = np.empty((0, 2048), dtype=np.float32)
-
-        if features is not None:
-            os.makedirs(os.path.dirname(path_features_output), exist_ok=True)
-            np.save(path_features_output, features)
-            logging.info(f"Saved features to {path_features_output} with shape {features.shape}")
-        else:
-            logging.error("Feature extraction failed, no features were generated.")
+        # save the featrue in .npy format
+        os.makedirs(os.path.dirname(path_features_output), exist_ok=True)
+        np.save(path_features_output, features)
 
 
-class PCAReducer:
+class PCAReducer():
     def __init__(self, pca_file=None, scaler_file=None):
         self.pca_file = pca_file
         self.scaler_file = scaler_file
         self.loadPCA()
-
+    
     def loadPCA(self):
+        # Read pre-computed PCA
         self.pca = None
         if self.pca_file is not None:
+            if not os.path.exists(self.pca_file):
+                error_msg = f"PCA file not found: {self.pca_file}"
+                logging.error(error_msg)
+                raise FileNotFoundError(error_msg)
             with open(self.pca_file, "rb") as fobj:
                 self.pca = pkl.load(fobj)
+                logging.info(f"Successfully loaded PCA from: {self.pca_file}")
+
+        # Read pre-computed average
         self.average = None
         if self.scaler_file is not None:
+            if not os.path.exists(self.scaler_file):
+                error_msg = f"Scaler file not found: {self.scaler_file}"
+                logging.error(error_msg)
+                raise FileNotFoundError(error_msg)
             with open(self.scaler_file, "rb") as fobj:
                 self.average = pkl.load(fobj)
+                logging.info(f"Successfully loaded scaler from: {self.scaler_file}")
 
     def reduceFeatures(self, input_features, output_features, overwrite=False):
-        logging.info(f"Reducing features {input_features}")
+        logging.info(f"reducing features {input_features}")
+
         if os.path.exists(output_features) and not overwrite:
-            logging.info("Features already exist, use overwrite=True to overwrite.")
+            logging.info(
+                "Features already exists, use overwrite=True to overwrite them. Exiting.")
             return
         feat = np.load(input_features)
         if self.average is not None:
@@ -327,15 +221,16 @@ class PCAReducer:
 
 
 if __name__ == "__main__":
+    # Argument parser
     parser = argparse.ArgumentParser(
-        description='Extract ResNet feature from a video (TF2 backend).')
+        description='Extract ResNet feature from a video.')
 
     parser.add_argument('--path_video', type=str, required=True,
                         help="Path of the Input Video")
     parser.add_argument('--path_features', type=str, required=True,
                         help="Path of the Output Features")
     parser.add_argument('--start', type=float, default=None,
-                        help="time of the video to start extracting features [default:None]")
+                        help="time of the video to strat extracting features [default:None]")
     parser.add_argument('--duration', type=float, default=None,
                         help="duration of the video before finishing extracting features [default:None]")
     parser.add_argument('--overwrite', action="store_true",
@@ -346,8 +241,9 @@ if __name__ == "__main__":
     parser.add_argument('--loglevel', type=str, default="INFO",
                         help="loglevel for logging [default:INFO]")
 
+    # feature setup
     parser.add_argument('--back_end', type=str, default="PT",
-                        help="Backend to use for feature extraction: TF2 or PT [default:PT]")
+                        help="Backend TF2 or PT [default:TF2]")
     parser.add_argument('--features', type=str, default="ResNET",
                         help="ResNET or R25D [default:ResNET]")
     parser.add_argument('--transform', type=str, default="crop",
@@ -359,16 +255,21 @@ if __name__ == "__main__":
     parser.add_argument('--FPS', type=float, default=2.0,
                         help="FPS for the features [default:2.0]")
 
-    parser.add_argument('--PCA', type=str, default=None,
+    # PCA reduction
+    parser.add_argument('--PCA', type=str, default="pca_512_PT.pkl",
                         help="Pickle with pre-computed PCA")
-    parser.add_argument('--PCA_scaler', type=str, default=None,
+    parser.add_argument('--PCA_scaler', type=str, default="average_512_PT.pkl",
                         help="Pickle with pre-computed PCA scaler")
-
+                        
     args = parser.parse_args()
+    # print(args)
     logging.basicConfig(
         level=getattr(logging, args.loglevel.upper(), None),
         format="%(asctime)s [%(threadName)-12.12s] [%(levelname)-5.5s]  %(message)s",
-        handlers=[logging.StreamHandler()])
+        handlers=[
+            logging.StreamHandler()
+        ])
+
 
     if args.GPU >= 0:
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
@@ -394,3 +295,4 @@ if __name__ == "__main__":
         myPCAReducer.reduceFeatures(input_features=args.path_features,
                                     output_features=args.path_features,
                                     overwrite=args.overwrite)
+

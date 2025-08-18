@@ -9,7 +9,7 @@ import torch
 
 from dataset import SoccerNet, SoccerNetClips, SoccerNetClipsTesting
 from model import Model
-from train import trainer, test, log_performance, collate_fn_filter_none
+from train import trainer, test, log_performance
 from loss import SegmentationLoss, SpottingLoss
 
 # for reproducibility
@@ -44,23 +44,19 @@ def main(args, model_save_path):
     if not args.test_only:
         train_loader = torch.utils.data.DataLoader(dataset_Train,
             batch_size=args.batch_size, shuffle=True,
-            num_workers=args.max_num_worker, pin_memory=True,
-            collate_fn=collate_fn_filter_none)
+            num_workers=args.max_num_worker, pin_memory=True)
 
         val_loader = torch.utils.data.DataLoader(dataset_Valid,
             batch_size=args.batch_size, shuffle=False,
-            num_workers=args.max_num_worker, pin_memory=True,
-            collate_fn=collate_fn_filter_none)
+            num_workers=args.max_num_worker, pin_memory=True)
 
         val_metric_loader = torch.utils.data.DataLoader(dataset_Valid_metric,
             batch_size=1, shuffle=False,
-            num_workers=1, pin_memory=True,
-            collate_fn=collate_fn_filter_none)
+            num_workers=1, pin_memory=True)
 
     test_loader = torch.utils.data.DataLoader(dataset_Test,
         batch_size=1, shuffle=False,
-        num_workers=1, pin_memory=True,
-        collate_fn=collate_fn_filter_none)
+        num_workers=1, pin_memory=True)
 
     # training parameters
     if not args.test_only:
@@ -125,12 +121,12 @@ if __name__ == '__main__':
     parser.add_argument("--loss_weight_detection", required=False, type=float, default=1.0, help="Weight of the detection loss")
     parser.add_argument("--scheduler", required=False, type=str, default="ExponentialDecay", help="define scheduler")
 
-    parser.add_argument('--batch_size', required=False, type=int,   default=128,     help='Batch size' )
+    parser.add_argument('--batch_size', required=False, type=int,   default=32,     help='Batch size' )
     parser.add_argument('--LR',       required=False, type=float,   default=1e-04, help='Learning Rate' )
     parser.add_argument('--patience', required=False, type=int,   default=25,     help='Batch size' )
 
     parser.add_argument('--GPU',        required=False, type=int,   default=-1,     help='ID of the GPU to use' )
-    parser.add_argument('--max_num_worker',   required=False, type=int,   default=8, help='number of worker to load data')
+    parser.add_argument('--max_num_worker',   required=False, type=int,   default=4, help='number of worker to load data')
 
     parser.add_argument('--loglevel',   required=False, type=str,   default='INFO', help='logging level')
 

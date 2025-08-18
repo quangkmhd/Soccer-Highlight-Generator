@@ -18,8 +18,8 @@ sys.path.append(str(current_dir / "Features"))  # Thêm đường dẫn đến t
 # TensorFlow no longer needed - using PyTorch backend exclusively
 
 # Import sau khi đã thiết lập đường dẫn
-from Features.VideoFeatureExtractor_pytorch import VideoFeatureExtractor, PCAReducer
-from src.model import Model  
+from Features.VideoFeatureExtractor import VideoFeatureExtractor, PCAReducer
+from .src.model import Model  
 
 # -----------------------------------------------------------------------------
 LABELS = {
@@ -45,27 +45,35 @@ def extract_features(video_path: str,
                      backend: str,
                      overwrite: bool,
                      batch_size_feat: int,
-                     device: str = "cuda") -> np.ndarray:
+                     pca_file: str = None,
+                     scaler_file: str = None) -> np.ndarray:
     if os.path.exists(feature_path) and not overwrite:
         logging.info("File feature already exists, load directly: %s", feature_path)
         return np.load(feature_path)
 
-    # Use PyTorch VideoFeatureExtractor without PCA (features already 512 dims from layer2)
-    extractor = VideoFeatureExtractor(
-        feature="ResNET", 
-        back_end="PT",  # Force PyTorch backend
-        overwrite=overwrite, 
-        transform="crop", 
-        grabber="opencv", 
-        FPS=fps,
-        device=device,
-        apply_pca=False,  # Disable PCA - features are already 512 dims
-        pca_file=None,
-        scaler_file=None
-    )
+    # Kiểm tra tồn tại của file PCA và scaler trước khi tiếp tục
+    if pca_file is not None and not os.path.exists(pca_file):
+        error_msg = f"PCA file not found: {pca_file}. Feature extraction cannot proceed without PCA file."
+        logging.error(error_msg)
+        raise FileNotFoundError(error_msg)
+    
+    if scaler_file is not None and not os.path.exists(scaler_file):
+        error_msg = f"Scaler file not found: {scaler_file}. Feature extraction cannot proceed without scaler file."
+        logging.error(error_msg)
+        raise FileNotFoundError(error_msg)
 
-    # Extract features (512 dims from ResNet layer2)
-    extractor.extractFeatures(video_path, feature_path, overwrite=overwrite)
+    extractor = VideoFeatureExtractor(feature="ResNET", back_end=backend, overwrite=overwrite, transform="crop", grabber="opencv", FPS=fps)
+    
+    if batch_size_feat:
+        extractor.batch_size = batch_size_feat
+    
+    logging.info(f"reducer initialized with pca_file={pca_file}, scaler_file={scaler_file}")
+    reducer = PCAReducer(pca_file=pca_file, scaler_file=scaler_file)
+    raw_path = feature_path.replace(".npy", "_raw.npy")
+
+    extractor.extractFeatures(video_path, raw_path, overwrite=True)
+    reducer.reduceFeatures(raw_path, feature_path, overwrite=True)
+    # os.remove(raw_path)
     return np.load(feature_path)
 
 def run_inference(features: np.ndarray,model_path: str,device: torch.device,fps: float,num_classes_type: int = 13,chunk_size: int = 48,receptive_field: int = 16,num_detections: int = 45) -> np.ndarray:
@@ -77,7 +85,7 @@ def run_inference(features: np.ndarray,model_path: str,device: torch.device,fps:
     # Check if feature dimensions match expected input_size
     if features.shape[1] != input_size:
         raise ValueError(f"Feature dimensions {features.shape[1]} don't match expected input_size {input_size}. ResNet layer2 should output 512 dims.")
-
+    
     model = Model(
         input_size=input_size,
         num_classes_type=num_classes_type,
@@ -157,8 +165,10 @@ def camera_predict_on_video(
     chunk_size: int = 48,
     receptive_field: int = 16,
     num_detections: int = 45,
-    overwrite: bool = True
-) -> str:
+    pca_file: str = None,
+    scaler_file: str = None,
+    overwrite: bool = True,
+ ) -> str:
     
     logging.info(f"Running camera prediction on {video_path}")
     
@@ -177,7 +187,7 @@ def camera_predict_on_video(
     
     # Create temporary directory for features
     with tempfile.TemporaryDirectory() as temp_dir:
-        feature_path = os.path.join(temp_dir, f"{video_name}_ResNET_{backend}_layer2_512.npy")
+        feature_path = os.path.join(temp_dir, f"{video_name}_ResNET_{backend}_PCA512.npy")
         
         # Extract features
         logging.info("Extracting features...")
@@ -188,8 +198,8 @@ def camera_predict_on_video(
             backend=backend, 
             overwrite=overwrite, 
             batch_size_feat=batch_size_feat,
-
-            device=device_str
+            pca_file=pca_file,
+            scaler_file=scaler_file
         )
         
         # Run inference
@@ -227,7 +237,8 @@ def main():
     parser.add_argument('--backend', default='PT')
     parser.add_argument('--fps', type=float, default=2.0)
     parser.add_argument('--batch_size_feat', type=int, default=128)
-
+    parser.add_argument('--pca_file', default="CALF_segmentation/Features/pca_512_PT.pkl")
+    parser.add_argument('--scaler_file', default="CALF_segmentation/Features/average_512_PT.pkl")
     parser.add_argument('--GPU', type=int, default=0)
     parser.add_argument('--loglevel', default='INFO')
     parser.add_argument('--overwrite', action='store_true')
@@ -256,6 +267,8 @@ def main():
         chunk_size=args.chunk_size,
         receptive_field=args.receptive_field,
         num_detections=args.num_detections,
+        pca_file=args.pca_file,
+        scaler_file=args.scaler_file,
         overwrite=args.overwrite
     )
 

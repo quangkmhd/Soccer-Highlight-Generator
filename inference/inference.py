@@ -24,7 +24,7 @@ sys.path.append(str(root_dir / "rules"))
 
 # Import các module sau khi đã thiết lập đường dẫn
 from ball_action_spotting.ball_action_predict import predict_on_video
-from CALF_segmentation.camera_predict import camera_predict_on_video
+from CALF_segmentation.camera_predict import camera_predict_pytorch
 from rules.rules_main import load_config as load_rules_config
 from rules.rules_main import load_prediction_data, process_highlights, save_top_highlights
 from rules.combine_predictions import combine_json_predictions
@@ -106,7 +106,7 @@ def run_ball_action_prediction(video_path: Path, config: dict, output_dir: Path)
     return output_file
 
 def run_camera_prediction(video_path: Path, config: dict, output_dir: Path) -> Path:
-    """Run the camera model prediction using the dedicated function"""
+    """Run the camera model prediction using PyTorch-based function"""
     
     # Xác định đường dẫn file output
     expected_output = output_dir / f"{video_path.stem}_camera.json"
@@ -116,7 +116,7 @@ def run_camera_prediction(video_path: Path, config: dict, output_dir: Path) -> P
         logger.info(f"Camera prediction file already exists: {expected_output}. Skipping prediction.")
         return expected_output
     
-    logger.info("Running Camera model prediction...")
+    logger.info("Running Camera model prediction with PyTorch...")
     
     camera_model_path = Path(config['models']['camera_model'])
     params = config['camera_params']
@@ -132,27 +132,31 @@ def run_camera_prediction(video_path: Path, config: dict, output_dir: Path) -> P
         if not scaler_file.exists():
             logger.warning(f"Scaler file not found: {scaler_file}")
             
-        # Call the camera prediction function
-        output_file = camera_predict_on_video(
+        # Call the PyTorch camera prediction function
+        output_file = camera_predict_pytorch(
             video_path=str(video_path),
             model_path=str(camera_model_path),
             output_dir=str(output_dir),
-            gpu_id=params['gpu_id'],
+            device_id=params['gpu_id'],
             fps=params['fps'],
-            backend=params['backend'],
             batch_size_feat=params['batch_size_feat'],
             confidence_threshold=params['confidence_threshold'],
-            pca_file=str(pca_file),
-            scaler_file=str(scaler_file),
+            pca_file=str(pca_file) if pca_file.exists() else None,
+            scaler_file=str(scaler_file) if scaler_file.exists() else None,
             num_classes_type=13,
-            tf_cpu_only=params.get('tf_cpu_only', False)  
+            chunk_size=params.get('chunk_size', 48),
+            receptive_field=params.get('receptive_field', 16),
+            num_detections=params.get('num_detections', 45),
+            overwrite=params.get('overwrite', True),
+            transform=params.get('transform', 'crop'),
+            grabber=params.get('grabber', 'opencv')
         )
         
         output_path = Path(output_file)
         if not output_path.exists():
             logger.warning(f"Camera prediction completed but file not found: {output_path}")
     except Exception as e:
-        logger.error(f"Error during camera prediction: {e}")
+        logger.error(f"Error during PyTorch camera prediction: {e}")
         # If file was created despite the error, use it
         if expected_output.exists():
             logger.info(f"Using existing camera prediction file despite error: {expected_output}")
@@ -211,10 +215,10 @@ def apply_rules_and_scoring(combined_json: Path, rules_config: Path, output_dir:
             return scored_output_file
         else:
             # Fallback to any existing highlights file
-            existing_files = list(output_dir.glob(f"{video_basename}_top_*_highlights.json"))
-            if existing_files:
-                logger.info(f"Using existing highlights file as fallback: {existing_files[0]}")
-                return existing_files[0]
+            expected_highlights = output_dir / f"{video_basename}_highlights.json"
+            if expected_highlights.exists():
+                logger.info(f"Using existing highlights file as fallback: {expected_highlights}")
+                return expected_highlights
             else:
                 raise  # Re-raise if no file was created
     

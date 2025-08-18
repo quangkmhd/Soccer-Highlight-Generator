@@ -7,13 +7,8 @@ from metrics_visibility_fast import average_mAP_visibility
 
 from tqdm import tqdm
 import torch
-from torch.utils.data.dataloader import default_collate
 import numpy as np
 import math
-
-def collate_fn_filter_none(batch):
-    batch = list(filter(lambda x: x is not None and all(item is not None for item in x), batch))
-    return default_collate(batch) if len(batch) > 0 else (None, None, None, None, None, None)
 
 
 def trainer(train_loader,
@@ -165,7 +160,7 @@ def train(dataloader,
             feats=feats.unsqueeze(1)
 
             # compute output
-            output_segmentation, output_spotting = model(feats)
+            output_segmentation, output_spotting =  model(feats.float())
             loss_segmentation = criterion[0](labels, output_segmentation) 
             loss_spotting = criterion[1](targets, output_spotting)
 
@@ -317,10 +312,7 @@ def test(dataloader, model, epoch, model_save_path):
 
     end = time.time()
     with tqdm(enumerate(dataloader), total=len(dataloader), ncols=120) as t:
-        for i, data in t:
-            if data is None or any(d is None for d in data):
-                continue
-            feat_half1, feat_half2, label_change_half1, label_change_half2,label_half1,label_half2 = data
+        for i, (feat_half1, feat_half2, label_change_half1, label_change_half2,label_half1,label_half2) in t:
             # if np.random.randint(10, size=1)<8:
             #      continue
             data_time.update(time.time() - end)
@@ -337,8 +329,8 @@ def test(dataloader, model, epoch, model_save_path):
             feat_half2=feat_half2.unsqueeze(1)
 
             # Compute the output
-            output_segmentation_half_1, output_spotting_half_1 = model(feat_half1)
-            output_segmentation_half_2, output_spotting_half_2 = model(feat_half2)
+            output_segmentation_half_1, output_spotting_half_1 = model(feat_half1.float())
+            output_segmentation_half_2, output_spotting_half_2 = model(feat_half2.float())
 
             timestamp_long_half_1 = timestamps2long(output_spotting_half_1.cpu().detach(), label_change_half1.size()[0], chunk_size, receptive_field)
             timestamp_long_half_2 = timestamps2long(output_spotting_half_2.cpu().detach(), label_change_half2.size()[0], chunk_size, receptive_field)

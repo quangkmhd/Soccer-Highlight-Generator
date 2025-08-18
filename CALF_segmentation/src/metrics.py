@@ -213,5 +213,3 @@ def average_mAP(targets, detections, framerate=2, savepath=None, NMS_on=False):
     # a_mAP = integral/(5*(len(mAP)-1))
 
     return mAP
-
-

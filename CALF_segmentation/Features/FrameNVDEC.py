@@ -1,411 +1,317 @@
-#!/usr/bin/env python3
-"""
-FrameNVDEC: GPU-accelerated video frame loader using NVIDIA Video Codec SDK
-Compatible with SoccerNet FrameCV interface
-"""
-
-import os
-import cv2
+import PyNvVideoCodec as nvc
 import numpy as np
+import torch
+# import pycuda.driver as cuda
+# import pycuda.autoinit
 import logging
-import imutils
-from typing import Optional, Generator
-
-# Optional dependencies
-try:
-    import torch
-except ImportError:
-    torch = None
-    logging.warning("PyTorch not available; NVDEC will be disabled.")
-
-try:
-    import PyNvVideoCodec as nvc
-except ImportError:
-    nvc = None
-    logging.warning("PyNvVideoCodec not available; NVDEC will be disabled.")
-
-try:
-    from tqdm import tqdm
-except ImportError:
-    tqdm = None
-
-try:
-    import moviepy.editor
-except ImportError:
-    moviepy = None
-    logging.warning("MoviePy not available; will use OpenCV for duration.")
-
-def getDuration(video_path):
-    """Get the duration (in seconds) for a video - compatible with FrameCV"""
-    if moviepy is not None:
-        try:
-            return moviepy.editor.VideoFileClip(video_path).duration
-        except:
-            pass
-
-    # Fallback to OpenCV
-    cap = cv2.VideoCapture(video_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    cap.release()
-
-    if fps > 0 and frame_count > 0:
-        return frame_count / fps
-    return 0.0
+import os
+from PIL import Image, ImageDraw, ImageFont
+import subprocess
+import asyncio
+import io
+import aiofiles
+import json
 
 
-class FrameNVDEC:
-    """
-    NVDEC-based frame loader for GPU-accelerated video decoding
-    Compatible with SoccerNet FrameCV interface
-    """
-    
-    def __init__(
-        self,
-        video_path: str,
-        FPS: float = 2.0,
-        transform: str = "crop",
-        start: Optional[float] = None,
-        duration: Optional[float] = None,
-        gpu_id: int = 0
-    ):
-        """
-        Initialize NVDEC frame loader - Compatible with FrameCV interface
+class VideoDecoder:
+    def __init__(self, codec=nvc.cudaVideoCodec.H264, gpuid=0, usedevicememory=True):
+        self.codec = codec
+        self.gpuid = gpuid
+        self.usedevicememory = usedevicememory
+        self.decoder = None
+        self.demuxer = None
+        self.frame_count = 0
+        self.packet_iterator = None
+        self.frame_iterator = None
 
-        Args:
-            video_path: Path to video file (compatible with FrameCV)
-            FPS: Target frames per second for extraction
-            transform: Transform type ("crop", "resize", "resize256crop224")
-            start: Start time in seconds (None for beginning)
-            duration: Duration in seconds (None for full video)
-            gpu_id: GPU device ID
-        """
-        if nvc is None or torch is None:
-            raise RuntimeError("NVDEC dependencies missing (PyNvCodec or PyTorch).")
-
-        self.path = video_path
-        self.FPS = FPS
-        self.transform = transform
-        self.start = start
-        self.duration = duration
-        self.gpu_id = gpu_id
-
-        # Probe native FPS & frame count via OpenCV (compatible with FrameCV)
-        cap = cv2.VideoCapture(self.path)
-        fps_video = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        cap.release()
-
-        if fps_video <= 0:
-            fps_video = 25.0
-        self.fps_video = fps_video  # Compatible with FrameCV attribute name
-
-        # Compute frame range
-        start_frame = int(self.start * fps_video) if self.start is not None else 0
-        if self.duration is not None:
-            end_frame = int((self.start or 0) * fps_video + self.duration * fps_video)
-        else:
-            end_frame = frame_count if frame_count > 0 else None
-
-        self.start_frame = start_frame
-        self.end_frame = end_frame
-
-        # Compute stride for downsampling
-        self.stride = max(1, round(fps_video / max(1e-6, FPS)))
-
-        # Progress bar
-        if frame_count > 0 and end_frame is not None:
-            total_raw = max(0, end_frame - start_frame)
-            selected_total = total_raw // self.stride + (1 if (total_raw % self.stride) > 0 else 0)
-        else:
-            selected_total = None
-        self.pbar = tqdm(total=selected_total, desc=f"NVDEC: {os.path.basename(self.path)}") if tqdm and selected_total else None
-
-        # NVDEC setup
-        self.demuxer = nvc.CreateDemuxer(str(self.path))
-        try:
-            width = self.demuxer.Width()
-            height = self.demuxer.Height()
-            codec = self.demuxer.GetNvCodecId()
-        except Exception:
-            width = height = None
-            codec = None
-
-        self.width = width
-        self.height = height
+    def initialize(self, input_file):
+        self.frame_count = 0
+        self.demuxer = nvc.CreateDemuxer(filename=input_file)
         self.decoder = nvc.CreateDecoder(
-            gpuid=gpu_id,
-            codec=codec if codec is not None else 0,
-            usedevicememory=True,
+            gpuid=self.gpuid,
+            codec=self.codec,
+            cudacontext=0,
+            cudastream=0,
+            usedevicememory=self.usedevicememory
         )
+        self.packet_iterator = iter(self.demuxer)
+        self.frame_iterator = None
 
-        # Compute time_second for compatibility with FrameCV
-        if self.duration is not None:
-            self.time_second = self.duration
-        elif frame_count > 0 and fps_video > 0:
-            self.time_second = frame_count / fps_video
-        else:
-            self.time_second = 0.0
-
-        # Store frame count for compatibility
-        self.numframe = frame_count
-
-    def __enter__(self):
-        """Context manager entry."""
+    def __iter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit with cleanup."""
-        self.cleanup()
-
-    def cleanup(self):
-        """Explicitly clean up GPU memory and NVDEC resources."""
-        try:
-            # Close progress bar if exists
-            if hasattr(self, 'pbar') and self.pbar is not None:
-                self.pbar.close()
-                self.pbar = None
-            
-            # Clean up NVDEC decoder
-            if hasattr(self, 'decoder') and self.decoder is not None:
-                del self.decoder
-                self.decoder = None
-            
-            # Clean up NVDEC demuxer  
-            if hasattr(self, 'demuxer') and self.demuxer is not None:
-                del self.demuxer
-                self.demuxer = None
-                
-            # Force GPU memory cleanup
-            if torch is not None and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                
-        except Exception as e:
-            logging.warning("Error during FrameNVDEC cleanup: %s", e)
-
-    def __del__(self):
-        """Destructor to ensure cleanup."""
-        self.cleanup()
-
-    def frames(self) -> Generator[np.ndarray, None, None]:
-        """
-        Yield frames as uint8 numpy arrays (224x224 RGB).
-        Generator method for memory efficiency.
-        """
-        frame_index = -1
-        for packet in self.demuxer:
+    def __next__(self):
+        if self.frame_iterator is None:
             try:
-                surfaces = self.decoder.Decode(packet)
+                packet = next(self.packet_iterator)
+                self.frame_iterator = iter(self.decoder.Decode(packet))
+            except StopIteration:
+                raise StopIteration
             except Exception as e:
-                logging.warning("NVDEC: skipping bad packet: %s", e)
-                continue
+                logging.error(f'Error decoding packet: {e}', exc_info=True)
+                raise e
 
-            for surface in surfaces:
-                frame_index += 1
-                # Frame range filter
-                if frame_index < self.start_frame:
-                    continue
-                if self.end_frame is not None and frame_index >= self.end_frame:
-                    break
+        try:
+            decoded_frame = next(self.frame_iterator)
+            self.frame_count += 1
+            return self.process_frame(decoded_frame)
+        except StopIteration:
+            self.frame_iterator = None
+            return self.__next__()
+        except Exception as e:
+            logging.error(f'Error decoding frame: {e}', exc_info=True)
+            raise e
 
-                # Downsampling stride
-                if (frame_index - self.start_frame) % self.stride != 0:
-                    continue
+    @staticmethod
+    def nv12_to_rgb(nv12_tensor, width, height):
+        try:
+            nv12_tensor = nv12_tensor.to(dtype=torch.float32)
+            y_plane = nv12_tensor[:height, :width]
+            uv_plane = nv12_tensor[height:height + height // 2, :].view(height // 2, width // 2, 2).repeat_interleave(2,
+                                                                                                                      dim=0).repeat_interleave(
+                2, dim=1)
+            u_plane = uv_plane[:, :, 0] - 128
+            v_plane = uv_plane[:, :, 1] - 128
+            r = y_plane + 1.402 * v_plane
+            g = y_plane - 0.344136 * u_plane - 0.714136 * v_plane
+            b = y_plane + 1.772 * u_plane
+            rgb_frame = torch.stack((r, g, b), dim=2).clamp(0, 255).byte()
+            return rgb_frame
+        except Exception as e:
+            logging.error(f'Error converting NV12 to RGB: {e}', exc_info=True)
+            raise e
 
-                try:
-                    # GPU tensor from NVDEC surface
-                    t_gpu = torch.from_dlpack(surface)  # (H*1.5, W) for NV12
-
-                    # Extract Y plane (grayscale)
-                    if t_gpu.dim() == 2 and self.height and self.width:
-                        t_gpu = t_gpu[:self.height, :]
-                    elif t_gpu.dim() == 3:
-                        t_gpu = t_gpu[0]
-                    if t_gpu.dim() != 2:
-                        t_gpu = t_gpu.view(self.height, self.width)
-
-                    # Apply transform similar to FrameCV
-                    frame_processed = self._apply_transform(t_gpu)
-
-                    # Convert to BGR format (compatible with FrameCV)
-                    if frame_processed.shape[2] == 3:  # RGB
-                        bgr = cv2.cvtColor(frame_processed, cv2.COLOR_RGB2BGR)
-                    else:  # Grayscale
-                        bgr = cv2.cvtColor(frame_processed, cv2.COLOR_GRAY2BGR)
-
-                    # Explicit GPU memory cleanup
-                    del t_gpu
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-
-                    if self.pbar:
-                        self.pbar.update(1)
-
-                    yield bgr
-
-                except Exception as e:
-                    logging.warning("NVDEC: failed to convert surface: %s", e)
-                    continue
-
-            if self.end_frame is not None and frame_index >= self.end_frame:
-                break
-
-        # Final cleanup
-        if self.pbar:
-            self.pbar.close()
-            self.pbar = None
-
-    def _apply_transform(self, t_gpu):
-        """
-        Apply transform to GPU tensor similar to FrameCV
-
-        Args:
-            t_gpu: GPU tensor from NVDEC surface
-
-        Returns:
-            Processed frame as numpy array (224x224x3)
-        """
-        # Normalize to [0,1] float for GPU processing
-        y_gpu = t_gpu.to(dtype=torch.float32) / 255.0
-        y_gpu = y_gpu.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
-
-        if self.transform == "resize256crop224":
-            # Resize to height 256 keeping aspect ratio, then center crop to 224x224
-            h, w = y_gpu.shape[2], y_gpu.shape[3]
-            new_h = 256
-            new_w = int(w * new_h / h)
-
-            # Resize
-            resized = torch.nn.functional.interpolate(
-                y_gpu, size=(new_h, new_w), mode='bilinear', align_corners=False
-            )
-
-            # Center crop to 224x224
-            off_h = (new_h - 224) // 2
-            off_w = (new_w - 224) // 2
-            cropped = resized[:, :, off_h:off_h+224, off_w:off_w+224]
-
-        elif self.transform == "crop":
-            # Resize to height 224 keeping aspect ratio, then center crop width to 224
-            h, w = y_gpu.shape[2], y_gpu.shape[3]
-            new_h = 224
-            new_w = int(w * new_h / h)
-
-            # Resize
-            resized = torch.nn.functional.interpolate(
-                y_gpu, size=(new_h, new_w), mode='bilinear', align_corners=False
-            )
-
-            # Center crop width to 224
-            if new_w > 224:
-                off_w = (new_w - 224) // 2
-                cropped = resized[:, :, :, off_w:off_w+224]
-            else:
-                cropped = resized
-
-        elif self.transform == "resize":
-            # Direct resize to 224x224 (lose aspect ratio)
-            cropped = torch.nn.functional.interpolate(
-                y_gpu, size=(224, 224), mode='bilinear', align_corners=False
-            )
-
-        else:
-            # Default: resize to 224x224
-            cropped = torch.nn.functional.interpolate(
-                y_gpu, size=(224, 224), mode='bilinear', align_corners=False
-            )
-
-        # Convert back to uint8 and CPU
-        frame_cpu = (cropped.squeeze().clamp(0, 1) * 255).to(torch.uint8).cpu().numpy()
-
-        # Convert grayscale to RGB by duplicating channels
-        if frame_cpu.ndim == 2:
-            frame_rgb = np.stack([frame_cpu, frame_cpu, frame_cpu], axis=2)
-        else:
-            frame_rgb = frame_cpu
-
-        return frame_rgb
-
-    @property
-    def frames_list(self):
-        """
-        Convert generator to list for compatibility with existing code.
-        Note: This loads all frames into memory, use with caution.
-        """
-        return list(self.frames())
-
-    @property
-    def frames_array(self):
-        """
-        Property to mimic FrameCV.frames attribute
-        Returns numpy array of all frames (loads into memory)
-        """
-        if not hasattr(self, '_frames_cache'):
-            self._frames_cache = np.array(list(self.frames()))
-        return self._frames_cache
+    def process_frame(self, frame):
+        try:
+            src_tensor = torch.from_dlpack(frame)
+            (height, width) = frame.shape
+            rgb_tensor = self.nv12_to_rgb(src_tensor, width, int(height / 1.5))
+            return rgb_tensor
+        except Exception as e:
+            logging.error(f'Error processing frame: {e}', exc_info=True)
+            raise e
 
 
-def is_nvdec_available() -> bool:
-    """Check if NVDEC dependencies are available"""
-    return nvc is not None and torch is not None
+class VideoEncoder:
+    def __init__(self, width, height, format, use_cpu_input_buffer=False, **kwargs):
+        self.width = width
+        self.height = height
+        self.format = format
+        self.use_cpu_input_buffer = use_cpu_input_buffer
+        self.encoder = nvc.CreateEncoder(width, height, format, use_cpu_input_buffer, **kwargs)
+        logging.info(
+            f'Encoder created with width: {width}, height: {height}, format: {format}, use_cpu_input_buffer: {use_cpu_input_buffer}')
+
+    @staticmethod
+    def rgb_to_yuv(rgb_tensor):
+        rgb_tensor = rgb_tensor.to(dtype=torch.float32)
+        r = rgb_tensor[:, :, 0]
+        g = rgb_tensor[:, :, 1]
+        b = rgb_tensor[:, :, 2]
+        y = 0.299 * r + 0.587 * g + 0.114 * b
+        u = -0.14713 * r - 0.28886 * g + 0.436 * b + 128
+        v = 0.615 * r - 0.51499 * g - 0.10001 * b + 128
+        height, width = rgb_tensor.shape[:2]
+        y_plane = y
+        u_plane = u[0::2, 0::2]
+        v_plane = v[0::2, 0::2]
+        uv_plane = torch.stack((u_plane, v_plane), dim=2).reshape(height // 2, width)
+        tensor_yuv = torch.cat((y_plane, uv_plane), dim=0).clamp(0, 255).byte()
+        return tensor_yuv
+
+    def encode(self, input_data):
+        try:
+            bitstream = self.encoder.Encode(input_data)
+            return bitstream
+        except Exception as e:
+            logging.error(f'Error encoding frame: {e}', exc_info=True)
+            return None
+
+    def end_encode(self):
+        try:
+            bitstream = self.encoder.EndEncode()
+            logging.info('Encoder flushed successfully')
+            return bitstream
+        except Exception as e:
+            logging.error(f'Error ending encode: {e}', exc_info=True)
+            return None
+
+    def reconfigure(self, params):
+        try:
+            self.encoder.Reconfigure(params)
+            logging.info('Encoder reconfigured successfully')
+        except Exception as e:
+            logging.error(f'Error reconfiguring encoder: {e}', exc_info=True)
+
+    def get_reconfigure_params(self):
+        try:
+            params = self.encoder.GetEncodeReconfigureParams()
+            logging.info('Reconfigure parameters fetched successfully')
+            return params
+        except Exception as e:
+            logging.error(f'Error fetching reconfigure parameters: {e}', exc_info=True)
+            return None
 
 
-def create_frame_loader(video_path: str, grabber: str = "opencv", **kwargs):
-    """
-    Factory function to create appropriate frame loader
-
-    Args:
-        video_path: Path to video file (compatible with FrameCV)
-        grabber: "opencv", "skvideo", or "nvdec"
-        **kwargs: Additional arguments for frame loader
-
-    Returns:
-        Frame loader instance (FrameCV, Frame, or FrameNVDEC)
-    """
-    from SoccerNet.DataLoader import Frame, FrameCV
-
-    if grabber.lower() == "nvdec":
-        if is_nvdec_available():
-            return FrameNVDEC(video_path, **kwargs)
-        else:
-            logging.warning("NVDEC requested but not available; falling back to OpenCV.")
-            return FrameCV(video_path, **kwargs)
-    elif grabber.lower() == "opencv":
-        return FrameCV(video_path, **kwargs)
-    elif grabber.lower() == "skvideo":
-        return Frame(video_path, **kwargs)
-    else:
-        raise ValueError(f"Unsupported grabber: {grabber}")
-
-
-def get_frames_from_loader(video_loader):
-    """
-    Get frames from any frame loader (FrameCV, Frame, or FrameNVDEC)
-    Handles different interfaces uniformly
-
-    Args:
-        video_loader: Frame loader instance
-
-    Returns:
-        List of frames (numpy arrays)
-    """
+def draw_frame_number(rgb_tensor, frame_number):
     try:
-        if isinstance(video_loader, FrameNVDEC):
-            # FrameNVDEC: use generator method with context manager for cleanup
-            with video_loader:
-                return list(video_loader.frames())
-        elif hasattr(video_loader, 'frames') and callable(video_loader.frames):
-            # Other loaders with callable frames method
-            return list(video_loader.frames())
-        else:
-            # Traditional FrameCV/Frame with frames attribute (numpy array)
-            frames = video_loader.frames if hasattr(video_loader, 'frames') else []
-            # Convert numpy array to list if needed
-            if isinstance(frames, np.ndarray):
-                return [frames[i] for i in range(len(frames))]
-            return frames
+        rgb_tensor = rgb_tensor.cpu()
+        np_image = rgb_tensor.numpy()
+        image = Image.fromarray(np_image, 'RGB')
+        draw = ImageDraw.Draw(image)
+        font_size = 80
+        try:
+            font = ImageFont.truetype("arial.ttf", font_size)
+        except IOError:
+            font = ImageFont.load_default()
+        text_color = (255, 255, 255)
+        text_position = (50, 50)
+        draw.text(text_position, f'Frame: {frame_number}', font=font, fill=text_color)
+        rgb_tensor = torch.from_numpy(np.array(image))
+        return rgb_tensor
     except Exception as e:
-        # Ensure cleanup even if error occurs
-        if hasattr(video_loader, 'cleanup'):
-            video_loader.cleanup()
+        logging.error(f'Error drawing frame number: {e}', exc_info=True)
         raise e
+
+
+def process(video_decoder, video_encoder, output_file):
+    try:
+        with open(output_file, 'wb') as f:
+            for frame_number, rgb_tensor in enumerate(video_decoder, start=1):
+                input_tensor = video_encoder.rgb_to_yuv(rgb_tensor)
+                input_tensor = input_tensor.cpu()
+                bitstream = video_encoder.encode(input_tensor)
+                if bitstream:
+                    f.write(bytearray(bitstream))
+            remaining_bitstream = video_encoder.end_encode()
+            if remaining_bitstream:
+                f.write(bytearray(remaining_bitstream))
+    except Exception as e:
+        logging.error(f'Error during encoding: {e}', exc_info=True)
+        return
+
+
+def _process(video_decoder, video_encoder, output_file):
+    try:
+        buffer = io.BytesIO()
+        with open(output_file, 'wb') as f:
+            for frame_number, rgb_tensor in enumerate(video_decoder, start=1):
+                input_tensor = video_encoder.rgb_to_yuv(rgb_tensor)
+                input_tensor = input_tensor.cpu()
+                bitstream = video_encoder.encode(input_tensor)
+                if bitstream:
+                    buffer.write(bytearray(bitstream))
+                if frame_number % 10 == 0:
+                    f.write(buffer.getvalue())
+                    buffer = io.BytesIO()
+            # Write any remaining data in the buffer
+            if buffer.getvalue():
+                f.write(buffer.getvalue())
+            remaining_bitstream = video_encoder.end_encode()
+            if remaining_bitstream:
+                f.write(bytearray(remaining_bitstream))
+    except Exception as e:
+        logging.error(f'Error during encoding: {e}', exc_info=True)
+        return
+
+
+async def async_write(f, data):
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, f.write, data)
+
+
+async def async_process(video_decoder, video_encoder, output_file):
+    try:
+        buffer = io.BytesIO()
+        for frame_number, rgb_tensor in enumerate(video_decoder, start=1):
+            input_tensor = video_encoder.rgb_to_yuv(rgb_tensor)
+            bitstream = video_encoder.encode(input_tensor)
+            if bitstream:
+                buffer.write(bytearray(bitstream))
+            if frame_number % 10 == 0:
+                async with aiofiles.open(output_file, 'ab') as f:
+                    await async_write(f, buffer.getvalue())
+                buffer = io.BytesIO()
+        remaining_bitstream = video_encoder.end_encode()
+        if remaining_bitstream:
+            buffer.write(bytearray(remaining_bitstream))
+        async with aiofiles.open(output_file, 'ab') as f:
+            await async_write(f, buffer.getvalue())
+    except Exception as e:
+        logging.error(f'Error during encoding: {e}', exc_info=True)
+        return
+
+
+def get_video_info(video_path):
+    cmd = [
+        'ffprobe',
+        '-v', 'error',
+        '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,duration',
+        '-of', 'json',
+        video_path
+    ]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    info = json.loads(result.stdout)
+    width = info['streams'][0]['width']
+    height = info['streams'][0]['height']
+    duration = float(info['streams'][0]['duration'])
+    return width, height, duration
+
+
+def test():
+    input_file = 'input3.mp4'
+    output_file = 'output3.h264'
+    audio_file = 'audio3.mp3'
+    mp4_output_file = 'output_long_video.mp4'
+
+    try:
+        t0 = time.time()
+        os.system(f'ffmpeg -y -i {input_file} -vn -acodec libmp3lame {audio_file}')
+        t1 = time.time()
+        logging.info(f'--------------> ffmpeg extract audio in {t1 - t0 :.2f} s')
+    except Exception as e:
+        logging.error(f'Error extracting audio: {e}', exc_info=True)
+        return
+
+    video_decoder = VideoDecoder()
+    video_decoder.initialize(input_file)
+    width, height, duration = get_video_info(input_file)
+    logging.info(f'Width: {width}, Height: {height}, Duration: {duration}')
+
+    video_encoder = VideoEncoder(width=width, height=height, format="NV12", use_cpu_input_buffer=False, codec="h264",
+                                 bitrate=4000000, fps=30)
+
+    process(video_decoder, video_encoder, output_file)
+    # asyncio.run(async_process(video_decoder, video_encoder, output_file))
+
+    try:
+        t0 = time.time()
+        os.system(
+            f'ffmpeg -y -i {output_file} -i {audio_file} -c:v copy -c:a aac -fflags +genpts -r 30 -movflags +faststart {mp4_output_file}')
+        t1 = time.time()
+        logging.info(f'--------------> ffmpeg merge h264 to mp4 in {t1 - t0 :.2f} s')
+    except Exception as e:
+        logging.error(f'Error merging video and audio: {e}', exc_info=True)
+        return
+
+    print(f"Encoding finished, output saved to {mp4_output_file}")
+
+
+if __name__ == "__main__":
+    import time
+
+    logging.basicConfig(level=logging.INFO)
+    t0 = time.time()
+    test()
+    t1 = time.time()
+    print(f"Encoding finished in {t1 - t0} s")
+
+"""
+Width: 720, Height: 1280, Duration: 150.2
+INFO:root:--------------> ffmpeg extract audio in 2.09 s
+INFO:root:--------------> ffmpeg merge h264 to mp4 in 6.04 s
+Encoding finished, output saved to output_long_video.mp4
+Session Deinitialization Time: 109 ms 
+Encoding finished in 28.431639671325684 s
+"""

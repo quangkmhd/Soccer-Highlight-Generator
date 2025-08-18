@@ -114,7 +114,7 @@ def run_ball_action_prediction(video_path: Path, config: dict, output_dir: Path,
     return output_file
 
 def run_camera_prediction(video_path: Path, config: dict, output_dir: Path, result_queue=None) -> Path:
-    """Run the camera model prediction using the dedicated function"""
+    """Run the camera model prediction using PyTorch-based function"""
     
     # Xác định đường dẫn file output
     expected_output = output_dir / f"{video_path.stem}_camera.json"
@@ -126,43 +126,53 @@ def run_camera_prediction(video_path: Path, config: dict, output_dir: Path, resu
             result_queue.put(expected_output)
         return expected_output
     
-    logger.info("Running Camera model prediction...")
+    logger.info("Running Camera model prediction with PyTorch...")
     
     camera_model_path = Path(config['models']['camera_model'])
     params = config['camera_params']
     
     try:
         # Đường dẫn đến file PCA và scaler
-        pca_file = Path("CALF_segmentation/Features/pca_512_TF2.pkl")
-        scaler_file = Path("CALF_segmentation/Features/average_512_TF2.pkl")
-        
-        # Kiểm tra tồn tại của file PCA và scaler
+        pca_file = Path("CALF_segmentation/Features/pca_512_PT.pkl")
+        scaler_file = Path("CALF_segmentation/Features/average_512_PT.pkl")
+
+        # Kiểm tra tồn tại của file PCA và scaler - dừng luôn nếu không có
         if not pca_file.exists():
-            logger.warning(f"PCA file not found: {pca_file}")
+            error_msg = f"PCA file not found: {pca_file}. Camera prediction cannot proceed without PCA file."
+            logger.error(error_msg)
+            if result_queue is not None:
+                result_queue.put(Exception(error_msg))
+            raise FileNotFoundError(error_msg)
         if not scaler_file.exists():
-            logger.warning(f"Scaler file not found: {scaler_file}")
+            error_msg = f"Scaler file not found: {scaler_file}. Camera prediction cannot proceed without scaler file."
+            logger.error(error_msg)
+            if result_queue is not None:
+                result_queue.put(Exception(error_msg))
+            raise FileNotFoundError(error_msg)
             
-        # Call the camera prediction function
+        # Call the PyTorch camera prediction function
         output_file = camera_predict_on_video(
             video_path=str(video_path),
             model_path=str(camera_model_path),
             output_dir=str(output_dir),
             gpu_id=params['gpu_id'],
             fps=params['fps'],
-            backend=params['backend'],
             batch_size_feat=params['batch_size_feat'],
             confidence_threshold=params['confidence_threshold'],
-            pca_file=str(pca_file),
-            scaler_file=str(scaler_file),
             num_classes_type=13,
-            tf_cpu_only=params.get('tf_cpu_only', False)  
+            chunk_size=params.get('chunk_size', 48),
+            receptive_field=params.get('receptive_field', 16),
+            num_detections=params.get('num_detections', 45),
+            overwrite=params.get('overwrite', True),
+            pca_file=pca_file,
+            scaler_file=scaler_file
         )
         
         output_path = Path(output_file)
         if not output_path.exists():
             logger.warning(f"Camera prediction completed but file not found: {output_path}")
     except Exception as e:
-        logger.error(f"Error during camera prediction: {e}")
+        logger.error(f"Error during PyTorch camera prediction: {e}")
         # If file was created despite the error, use it
         if expected_output.exists():
             logger.info(f"Using existing camera prediction file despite error: {expected_output}")
@@ -171,7 +181,7 @@ def run_camera_prediction(video_path: Path, config: dict, output_dir: Path, resu
             return expected_output
         else:
             if result_queue is not None:
-                result_queue.put(Exception(f"Error during camera prediction: {e}"))
+                result_queue.put(Exception(f"Error during PyTorch camera prediction: {e}"))
             raise  # Re-raise if no file was created
     
     if result_queue is not None:
@@ -218,17 +228,12 @@ def cut_video_clips(highlights_json: Path, video_path: Path, config: dict, outpu
     if not output_dir.exists():
         output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Trong cấu trúc mới, thư mục clip sẽ được tạo tự động bởi cut_clips.py
-    # Nó sẽ là output_dir/video_name
     video_name = video_path.stem
     
-    # Kiểm tra xem đã có video clips trong thư mục chưa
-    # cut_clips.py sẽ tạo thư mục clips với tên video_name
     if any(output_dir.glob(f"{video_name}/**/*.mp4")):
         logger.info(f"Found existing video clips in {output_dir}/{video_name}. Skipping clip cutting.")
         return output_dir
-    
-    logger.info("Cutting video into clips...")
+
     
     rules_config_path = Path(config['rules']['config_path'])
     if not rules_config_path.exists():

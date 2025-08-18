@@ -238,4 +238,3 @@ def MirrorLoss(pred_score, gt_label, K, hit_radius = 0.1, miss_radius = 0.9, coe
 #permutation = torch_permute_ypred_for_matching(X,P)
 #
 #print(permutation)
-

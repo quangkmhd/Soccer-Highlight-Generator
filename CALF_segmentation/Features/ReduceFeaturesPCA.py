@@ -16,34 +16,51 @@ from tqdm import tqdm
 def main(args):
 
     if not os.path.exists(args.pca_file) or not os.path.exists(args.scaler_file):
-            
-        PCAdata = []
-        for game in tqdm(getListGames("v1")):
+        
+        game_files = []
+        # Collect all feature files first
+        print("Collecting feature files...")
+        for game in tqdm(getListGames(split="v1",task="camera-changes")):
+            for half in [1, 2]:
+                feature_file = os.path.join(args.soccernet_dirpath, game, f"{half}_224p_{args.features}")
+                if os.path.exists(feature_file):
+                    game_files.append(feature_file)
 
-            half1 = np.load(os.path.join(args.soccernet_dirpath, game, "1_"+args.features))
-            PCAdata.append(half1)
-            half2 = np.load(os.path.join(args.soccernet_dirpath, game, "2_"+args.features))
-            PCAdata.append(half2)
-
-        # Remove average of features
-        PCAdata = np.vstack(PCAdata)
-        average = np.mean(PCAdata, axis=0)
-        PCAdata = PCAdata - average
-
+        # --- Pass 1: Calculate the mean incrementally to avoid memory issues ---
+        print("Pass 1: Calculating mean of features...")
+        total_sum = None
+        total_count = 0
+        for f in tqdm(game_files):
+            feat = np.load(f)
+            if total_sum is None:
+                # Use float64 for sum to maintain precision with large numbers
+                total_sum = np.sum(feat, axis=0, dtype=np.float64)
+            else:
+                total_sum += np.sum(feat, axis=0, dtype=np.float64)
+            total_count += feat.shape[0]
+        
+        average = (total_sum / total_count).astype(np.float32)
+        
         # Store average for later
         with open(args.scaler_file, "wb") as fobj:
             pkl.dump(average, fobj)
-        
+        print("Mean calculated and saved.")
 
-        # Create PCA instance with svd_solver='full' and fit the data
-        pca = PCA(n_components=args.dim_reduction, svd_solver='full')
-        print(datetime.now(), "PCA start")
-        pca.fit(PCAdata)
-        print(datetime.now(), "PCA fitted")
+        # --- Pass 2: Fit IncrementalPCA, which is suitable for large datasets ---
+        print("Pass 2: Fitting IncrementalPCA...")
+        # Batch size can be tuned based on available RAM, but this is a safe default
+        pca = IncrementalPCA(n_components=args.dim_reduction, batch_size=max(2048, args.dim_reduction))
+        print(datetime.now(), "IncrementalPCA start")
+        for f in tqdm(game_files):
+            feat = np.load(f)
+            # Center the data with the pre-calculated mean before fitting
+            pca.partial_fit(feat - average)
+        print(datetime.now(), "IncrementalPCA fitted")
 
         # Store PCA for later
         with open(args.pca_file, "wb") as fobj:
             pkl.dump(pca, fobj)
+        print("PCA model saved.")
 
 
 
@@ -58,10 +75,10 @@ def main(args):
 
 
     # loop over games in v1
-    for game in tqdm(getListGames(["v1"])):
+    for game in tqdm(getListGames(split="v1",task="camera-changes")):
         for half in [1,2]:
-            game_feat = os.path.join(args.soccernet_dirpath, game, f"{half}_{args.features}")
-            game_feat_pca = os.path.join(args.soccernet_dirpath, game, f"{half}_{args.features_PCA}")
+            game_feat = os.path.join(args.soccernet_dirpath, game, f"{half}_224p_{args.features}")
+            game_feat_pca = os.path.join(args.soccernet_dirpath, game, f"{half}_224p_{args.features_PCA}")
 
             if not os.path.exists(game_feat_pca) or args.overwrite:
                 feat = np.load(game_feat)
@@ -72,21 +89,21 @@ def main(args):
                 print(f"{game_feat_pca} already exists")
 
 
-    for game in tqdm(getListGames(["challenge"])):
-        for half in [1,2]:
-            game_feat = os.path.join(args.soccernet_dirpath, game, f"{half}_{args.features}")
-            game_feat_pca = os.path.join(args.soccernet_dirpath, game, f"{half}_{args.features_PCA}")
-            if not os.path.exists(game_feat_pca) or args.overwrite:
-                feat = np.load(game_feat)
+    # for game in tqdm(getListGames(["challenge"])):
+    #     for half in [1,2]:
+    #         game_feat = os.path.join(args.soccernet_dirpath, game, f"{half}_{args.features}")
+    #         game_feat_pca = os.path.join(args.soccernet_dirpath, game, f"{half}_{args.features_PCA}")
+    #         if not os.path.exists(game_feat_pca) or args.overwrite:
+    #             feat = np.load(game_feat)
                 
-                feat = feat - average
+    #             feat = feat - average
                 
-                feat_reduced = pca.transform(feat)
+    #             feat_reduced = pca.transform(feat)
 
-                np.save(game_feat_pca, feat_reduced)
+    #             np.save(game_feat_pca, feat_reduced)
 
-            else:
-                print(f"{game_feat_pca} already exists")
+    #         else:
+    #             print(f"{game_feat_pca} already exists")
 
 if __name__ == "__main__":
     # Argument parser
@@ -105,20 +122,11 @@ if __name__ == "__main__":
                         help="pickle for average [default:average_512_PT.pkl]")
     parser.add_argument('--dim_reduction', type=int, default=512,
                         help="dimension reduction [default:512]")
-    parser.add_argument('--back_end', type=str, default="PT",
-                        help="Backend TF2 or PT [default:PT]")
 
     parser.add_argument('--overwrite', action="store_true",
                         help="Overwrite the features? [default:False]")
 
     args = parser.parse_args()
-
-    # Automatically set file names based on the backend
-    args.features = f"ResNET_{args.back_end}.npy"
-    args.features_PCA = f"ResNET_{args.back_end}_PCA{args.dim_reduction}.npy"
-    args.pca_file = f"pca_{args.dim_reduction}_{args.back_end}.pkl"
-    args.scaler_file = f"average_{args.dim_reduction}_{args.back_end}.pkl"
-
     print(args)
 
     main(args)

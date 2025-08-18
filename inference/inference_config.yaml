@@ -26,7 +26,7 @@ camera_params:
   num_detections: 45
   overwrite: true
   transform: "crop"
-  grabber: "opencv" 
+  grabber: "nvdec"
 # Rules Configuration
 rules:
   config_path: "rules/config.yaml"  # Đường dẫn tương đối từ thư mục gốc

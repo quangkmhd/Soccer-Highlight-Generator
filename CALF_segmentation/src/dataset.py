@@ -231,13 +231,9 @@ class SoccerNetClipsTesting(Dataset):
             label_half1 (np.array): labels (one-hot) for the 1st half.
             label_half2 (np.array): labels (one-hot) for the 2nd half.
         """
-        try:
-            # Load features
-            feat_half1 = np.load(os.path.join(self.path, self.listGames[index], "1_" + self.features))
-            feat_half2 = np.load(os.path.join(self.path, self.listGames[index], "2_" + self.features))
-        except ValueError as e:
-            logging.warning(f"Skipping game {self.listGames[index]} in SoccerNetClipsTesting due to ValueError: {e}")
-            return None, None, None, None, None, None
+        # Load features
+        feat_half1 = np.load(os.path.join(self.path, self.listGames[index], "1_" + self.features))
+        feat_half2 = np.load(os.path.join(self.path, self.listGames[index], "2_" + self.features))
 
         # Load labels
         labels = json.load(open(os.path.join(self.path, self.listGames[index], self.labels)))
