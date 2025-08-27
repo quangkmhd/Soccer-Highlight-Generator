@@ -87,13 +87,28 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
                     visible=True,
                 )
 
+                with gr.Row():
+                    download_zip_btn = gr.Button("Download Selected as ZIP", variant="secondary", size="lg")
+                
+                # Hidden button to trigger the actual download
+                zip_file_output_btn = gr.DownloadButton(label="Download ZIP", visible=False)
+
+
+
         # Handlers
         def toggle_input_visibility(input_method: str) -> Tuple[gr.update, gr.update]:
             if input_method == "Upload File":
                 return gr.update(visible=True), gr.update(visible=False)
             return gr.update(visible=False), gr.update(visible=True)
 
-        def process_video(input_method: str, video_file: Optional[str], video_path: Optional[str]) -> Tuple[str, str, bool]:
+        def start_processing(input_method: str, video_file: Optional[str], video_path: Optional[str], prev_job_id: str) -> Tuple[str, str, bool]:
+            # Auto-clean previous job (uploaded source + generated clips) if exists
+            if prev_job_id:
+                try:
+                    api_client.cleanup_job(prev_job_id)
+                except Exception:
+                    pass
+            # Start new job
             if input_method == "Upload File":
                 success, result = api_client.upload_video(video_file, None)
             else:
@@ -147,12 +162,27 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
                 "✅ Job files cleaned up successfully" if api_client.cleanup_job(job_id) else "❌ Failed to cleanup job files"
             )
 
+        def download_selected_clips(job_id: str, selected: Set[str], clips_data: List[Dict[str, Any]]):
+            """Download selected clips as ZIP and return file path for Gradio download."""
+            if not job_id or not selected:
+                # Return an update for the button and a message for the status textbox
+                return gr.update(), "No clips selected or job ID missing"
+
+            filenames = [clip["filename"] for clip in clips_data if clip["url"] in selected]
+            zip_path = api_client.download_clips_zip(job_id, filenames)
+
+            if zip_path is None:
+                return gr.update(), "❌ Failed to download clips"
+
+            # Return a new DownloadButton component to trigger the download, and a success message
+            return gr.DownloadButton(value=str(zip_path), visible=True), "✅ ZIP ready for download"
+
         # Wire events
         input_type.change(toggle_input_visibility, inputs=[input_type], outputs=[video_file, video_path])
 
         process_btn.click(
-            process_video,
-            inputs=[input_type, video_file, video_path],
+            start_processing,
+            inputs=[input_type, video_file, video_path, job_id_display],
             outputs=[status_text, job_id_display, cleanup_btn],
         ).then(lambda: gr.update(visible=True), outputs=[progress_text]).then(
             lambda: (set(), [], "Select Current Clip"), outputs=[selected_clips, all_clips_data, select_current_btn]
@@ -168,6 +198,12 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
             select_current_clip,
             inputs=[current_viewing_index, selected_clips, all_clips_data],
             outputs=[selected_clips, selected_clips_gallery, selected_count, select_current_btn],
+        )
+
+        download_zip_btn.click(
+            download_selected_clips,
+            inputs=[job_id_display, selected_clips, all_clips_data],
+            outputs=[zip_file_output_btn, status_text],
         )
 
         timer = gr.Timer(2.0)

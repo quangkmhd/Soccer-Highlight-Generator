@@ -40,15 +40,22 @@ windows:
 # --- Lọc Clip ---
 filtering:
   confidence_thresholds:
-    'Foul': 0.45
-    'Card': 0.45
-    'Penalty': 0.75
+    'Goal': 0.3
+    'Foul': 0.6
+    'Card': 0.7
+    'Penalty': 0.6
+    'Direct free-kick': 0.75
+    'Corner': 0.75
 # --- Xếp hạng ---
+
+
 ranking:
   priority_order:
-    - 'Goal'
-    - 'Penalty'    
-    - 'Foul->Card' 
+    - 'Goal'  
+    - 'Penalty' 
+    - 'Foul->Card'   
+    - 'Direct free-kick'   
+    - 'Corner'   
 
 
 # --- Chấm điểm highlight ---
@@ -56,8 +63,10 @@ scoring:
   # Điểm cơ bản cho từng loại sự kiện (nhân với confidence)
   base_scores:
     'Goal': 70
-    'Penalty': 60
-    'Foul->Card': 35
+    'Penalty': 70
+    'Foul->Card': 45
+    'Direct free-kick': 50
+    'Corner': 30
   
   # Điểm mặc định cho các sự kiện không được định nghĩa
   default_base_score: 20

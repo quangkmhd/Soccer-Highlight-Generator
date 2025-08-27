@@ -8,12 +8,26 @@ from typing import Any, Dict, List
 
 
 def extract_score_from_filename(filename: str) -> str:
-    """Extract score text from a clip filename.
-    Example: '47_01-27-43_01-28-42_goal.mp4' -> 'Score: 47'
+    """Extract a readable *event label* and *score* from a clip filename.
+
+    Examples
+    --------
+    '47_01-27-43_01-28-42_goal.mp4' -> 'Goal Score: 47'
+    '47_01-27-43_01-28-42_foul-card.mp4' -> 'Foul -> Card Score: 47'
     """
     try:
-        score = filename.split("_")[0]
-        return f"Score: {score}" if score.isdigit() else filename
+        parts = filename.split("_")
+        score_part = parts[0]
+        if not score_part.isdigit():
+            return filename  # Unexpected pattern
+
+        # Strip extension and derive event label
+        label_raw = parts[-1].split(".")[0]
+        
+        # Event names are now unsanitized, so use them directly
+        label_text = label_raw
+
+        return f"{label_text} Score: {score_part}" if label_text else f"Score: {score_part}"
     except Exception:
         return filename
 

@@ -13,8 +13,10 @@ from typing import Dict, List, Optional, Any
 import shutil
 import yaml
 import uvicorn
+import io
+import zipfile
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import gradio as gr
 
@@ -84,6 +86,20 @@ async def process_video_async(job_id: str, video_path: Path):
         processing_service.fail_job(job_id, str(e))
 
 
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    """Cleanup all job resources when the API server stops."""
+    try:
+        # Copy keys to list to avoid mutation during iteration
+        for jid in list(job_manager.jobs.keys()):
+            try:
+                job_manager.cleanup_job(jid)
+            except Exception as e:
+                logger.warning(f"Failed to cleanup job {jid} on shutdown: {e}")
+    except Exception as e:
+        logger.warning(f"Shutdown cleanup encountered an error: {e}")
+
+
 @app.post("/upload", response_model=Dict[str, str])
 async def upload_video(
     background_tasks: BackgroundTasks,
@@ -95,10 +111,19 @@ async def upload_video(
     video_file_path, video_name, job_id = validate_and_process_video_input(job_manager, file, video_path)
     
     if file:
+        # Stream to disk to avoid loading the entire file into memory
+        total_written = 0
+        chunk_size = 1024 * 1024  # 1MB
         with open(video_file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        logger.info(f"Video uploaded: {file.filename} ({len(content)} bytes)")
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                buffer.write(chunk)
+                total_written += len(chunk)
+        # Ensure job metadata reflects the actual saved path for the uploaded file
+        job_manager.update_job(job_id, video_path=str(video_file_path))
+        logger.info(f"Video uploaded: {file.filename} ({total_written} bytes) -> {video_file_path}")
     else:
         logger.info(f"Using video path: {video_path}")
     
@@ -164,6 +189,36 @@ async def stream_clip(job_id: str, clip_filename: str):
     )
 
 
+@app.post("/download/{job_id}/zip")
+async def download_selected_clips(job_id: str, filenames: List[str]):
+    """Download selected clips as a single ZIP archive.
+
+    Parameters
+    ----------
+    job_id : str
+        Processing job identifier.
+    filenames : List[str]
+        List of clip filenames to include.
+    """
+    clips_dir = validate_job_and_get_clips_dir(job_manager, job_id)
+
+    # Create in-memory zip
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in filenames:
+            clip_path = find_clip_file(clips_dir, fname)
+            if clip_path is None:
+                continue
+            zf.write(clip_path, arcname=fname)
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{job_id}_clips.zip"'}
+    )
+
+
 @app.delete("/cleanup/{job_id}")
 async def cleanup_job(job_id: str):
     """Clean up temporary files for a job"""
@@ -201,8 +256,8 @@ def load_config() -> dict:
 
 def main() -> None:
     """Run the FastAPI server using configuration if available."""
-    cfg = load_config()
-
+    cfg1 = load_config()
+    cfg= cfg1["server"]
     # Use import string to support workers>1
     uvicorn.run(
         "api.main_api:app",

@@ -64,7 +64,8 @@ class HighlightExtractor:
                         'end_time': current_block[-1]['timestamp'],
                         'actions': current_block,
                         'count': len(current_block),
-                        'avg_confidence': sum(a['confidence'] for a in current_block) / len(current_block)
+                        'avg_confidence': sum(a['confidence'] for a in current_block) / len(current_block),
+                        'max_confidence': max(a['confidence'] for a in current_block)
                     })
                     current_block = [action]
             
@@ -75,7 +76,8 @@ class HighlightExtractor:
                     'end_time': current_block[-1]['timestamp'],
                     'actions': current_block,
                     'count': len(current_block),
-                    'avg_confidence': sum(a['confidence'] for a in current_block) / len(current_block)
+                    'avg_confidence': sum(a['confidence'] for a in current_block) / len(current_block),
+                    'max_confidence': max(a['confidence'] for a in current_block)
                 })
 
     def _calculate_block_score(self, block):
@@ -86,11 +88,11 @@ class HighlightExtractor:
 
         foul_blocks = [
             b for b in self.action_blocks 
-            if b['label'] in self.F_events and b['avg_confidence'] >= self.confidence_thresholds.get(b['label'], 0)
+            if b['label'] in self.F_events and b['max_confidence'] >= self.confidence_thresholds.get(b['label'], 0)
         ]
         card_blocks = [
             b for b in self.action_blocks 
-            if b['label'] in self.C_events and b['avg_confidence'] >= self.confidence_thresholds.get(b['label'], 0)
+            if b['label'] in self.C_events and b['max_confidence'] >= self.confidence_thresholds.get(b['label'], 0)
         ]
         valid_pairs = []
         for card_block in card_blocks:
@@ -190,7 +192,7 @@ class HighlightExtractor:
             threshold = self.confidence_thresholds.get(block['label'])
             # Nếu không có ngưỡng (is None) thì luôn giữ lại (ví dụ: 'Goal')
             # Nếu có ngưỡng, chỉ giữ lại nếu confidence >= ngưỡng
-            if threshold is None or block['avg_confidence'] >= threshold:
+            if threshold is None or block['max_confidence'] >= threshold:
                 anchor_blocks.append(block)
 
         g_config = self.config['windows']['g_event']

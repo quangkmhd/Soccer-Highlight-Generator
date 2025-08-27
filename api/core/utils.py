@@ -79,7 +79,7 @@ def validate_and_process_video_input(job_manager, file: UploadFile, video_path: 
             raise HTTPException(status_code=400, detail="Invalid video format")
         
         video_name = Path(file.filename).stem
-        job_id = job_manager.create_job(video_name, Path(file.filename))
+        job_id = job_manager.create_job(video_name, Path(file.filename), is_upload=True)
         temp_dir = job_manager.get_temp_dir(job_id)
         video_file_path = temp_dir / file.filename
         return video_file_path, video_name, job_id
@@ -92,7 +92,7 @@ def validate_and_process_video_input(job_manager, file: UploadFile, video_path: 
             raise HTTPException(status_code=400, detail="Invalid video format")
         
         video_name = video_file_path.stem
-        job_id = job_manager.create_job(video_name, video_file_path)
+        job_id = job_manager.create_job(video_name, video_file_path, is_upload=False)
         return video_file_path, video_name, job_id
 
 

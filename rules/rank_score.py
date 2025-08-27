@@ -132,7 +132,8 @@ def write_report(results: List[Dict[str, Any]], output_path: Union[str, Path]) -
             "rank": i,
             "score": item["score"],
             "start": item["start_time"],
-            "end": item["end_time"]
+            "end": item["end_time"],
+            "events": item.get("events", [])  # Pass through the detailed events list
         }
         json_output.append(json_item)
     

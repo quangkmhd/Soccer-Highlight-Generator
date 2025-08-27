@@ -19,7 +19,7 @@ class JobManager:
         self.jobs: Dict[str, Dict[str, Any]] = {}
         self.temp_dirs: Dict[str, Path] = {}
     
-    def create_job(self, video_name: str, video_path: Path) -> str:
+    def create_job(self, video_name: str, video_path: Path, is_upload: bool = False) -> str:
         """Create a new processing job"""
         job_id = str(uuid.uuid4())
         
@@ -34,7 +34,8 @@ class JobManager:
             "progress": 0.0,
             "message": "Video ready for processing",
             "video_name": video_name,
-            "video_path": str(video_path)
+            "video_path": str(video_path),
+            "is_upload": is_upload
         }
         
         logger.info(f"Created job {job_id} for video: {video_name}")
@@ -53,15 +54,28 @@ class JobManager:
         """Clean up job and temporary files"""
         if job_id not in self.jobs:
             return False
-        
-        # Remove temporary directory
-        if job_id in self.temp_dirs:
+
+        job = self.jobs.get(job_id, {})
+
+        # Remove temporary directory only if it was an upload
+        if job.get("is_upload") and job_id in self.temp_dirs:
             temp_dir = self.temp_dirs[job_id]
             if temp_dir.exists():
                 import shutil
                 shutil.rmtree(temp_dir)
             del self.temp_dirs[job_id]
-        
+
+        # Remove generated clips directory if it exists
+        clips_dir_str = job.get("clips_dir")
+        if clips_dir_str:
+            clips_path = Path(clips_dir_str)
+            try:
+                if clips_path.exists():
+                    import shutil
+                    shutil.rmtree(clips_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove clips dir for job {job_id}: {e}")
+
         # Remove job from memory
         del self.jobs[job_id]
         logger.info(f"Cleaned up job {job_id}")
