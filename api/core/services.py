@@ -50,36 +50,6 @@ class JobManager:
         if job_id in self.jobs:
             self.jobs[job_id].update(updates)
     
-    def cleanup_job(self, job_id: str) -> bool:
-        """Clean up job and temporary files"""
-        if job_id not in self.jobs:
-            return False
-
-        job = self.jobs.get(job_id, {})
-
-        # Remove temporary directory only if it was an upload
-        if job.get("is_upload") and job_id in self.temp_dirs:
-            temp_dir = self.temp_dirs[job_id]
-            if temp_dir.exists():
-                import shutil
-                shutil.rmtree(temp_dir)
-            del self.temp_dirs[job_id]
-
-        # Remove generated clips directory if it exists
-        clips_dir_str = job.get("clips_dir")
-        if clips_dir_str:
-            clips_path = Path(clips_dir_str)
-            try:
-                if clips_path.exists():
-                    import shutil
-                    shutil.rmtree(clips_path)
-            except Exception as e:
-                logger.warning(f"Failed to remove clips dir for job {job_id}: {e}")
-
-        # Remove job from memory
-        del self.jobs[job_id]
-        logger.info(f"Cleaned up job {job_id}")
-        return True
     
     def get_temp_dir(self, job_id: str) -> Optional[Path]:
         """Get temporary directory for job"""

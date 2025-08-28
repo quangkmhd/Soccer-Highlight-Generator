@@ -54,7 +54,6 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
                 status_text = gr.Textbox(label="Status", interactive=False)
                 progress_text = gr.Textbox(label="Progress", interactive=False, visible=False)
                 job_id_display = gr.Textbox(label="Job ID", interactive=False, visible=False)
-                cleanup_btn = gr.Button("Cleanup Job Files", variant="secondary", visible=False)
 
             with gr.Column(scale=2):
                 gr.Markdown("### Generated Action Clips")
@@ -87,11 +86,6 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
                     visible=True,
                 )
 
-                with gr.Row():
-                    download_zip_btn = gr.Button("Download Selected as ZIP", variant="secondary", size="lg")
-                
-                # Hidden button to trigger the actual download
-                zip_file_output_btn = gr.DownloadButton(label="Download ZIP", visible=False)
 
 
 
@@ -102,12 +96,6 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
             return gr.update(visible=False), gr.update(visible=True)
 
         def start_processing(input_method: str, video_file: Optional[str], video_path: Optional[str], prev_job_id: str) -> Tuple[str, str, bool]:
-            # Auto-clean previous job (uploaded source + generated clips) if exists
-            if prev_job_id:
-                try:
-                    api_client.cleanup_job(prev_job_id)
-                except Exception:
-                    pass
             # Start new job
             if input_method == "Upload File":
                 success, result = api_client.upload_video(video_file, None)
@@ -155,27 +143,7 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
             count_text = f"<div class='selected-count'>{len(new_selected)} clips selected</div>"
             return new_selected, selected_gallery, count_text, new_button_text
 
-        def cleanup_job_files(job_id: str) -> str:
-            if not job_id:
-                return "No job ID to cleanup"
-            return (
-                "✅ Job files cleaned up successfully" if api_client.cleanup_job(job_id) else "❌ Failed to cleanup job files"
-            )
 
-        def download_selected_clips(job_id: str, selected: Set[str], clips_data: List[Dict[str, Any]]):
-            """Download selected clips as ZIP and return file path for Gradio download."""
-            if not job_id or not selected:
-                # Return an update for the button and a message for the status textbox
-                return gr.update(), "No clips selected or job ID missing"
-
-            filenames = [clip["filename"] for clip in clips_data if clip["url"] in selected]
-            zip_path = api_client.download_clips_zip(job_id, filenames)
-
-            if zip_path is None:
-                return gr.update(), "❌ Failed to download clips"
-
-            # Return a new DownloadButton component to trigger the download, and a success message
-            return gr.DownloadButton(value=str(zip_path), visible=True), "✅ ZIP ready for download"
 
         # Wire events
         input_type.change(toggle_input_visibility, inputs=[input_type], outputs=[video_file, video_path])
@@ -183,12 +151,11 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
         process_btn.click(
             start_processing,
             inputs=[input_type, video_file, video_path, job_id_display],
-            outputs=[status_text, job_id_display, cleanup_btn],
+            outputs=[status_text, job_id_display],
         ).then(lambda: gr.update(visible=True), outputs=[progress_text]).then(
             lambda: (set(), [], "Select Current Clip"), outputs=[selected_clips, all_clips_data, select_current_btn]
         )
 
-        cleanup_btn.click(cleanup_job_files, inputs=[job_id_display], outputs=[status_text])
 
         clips_gallery.select(
             handle_clip_view, inputs=[all_clips_data, selected_clips], outputs=[current_viewing_index, select_current_btn]
@@ -200,17 +167,12 @@ def create_demo(api_client: SoccerAPIClient) -> gr.Blocks:
             outputs=[selected_clips, selected_clips_gallery, selected_count, select_current_btn],
         )
 
-        download_zip_btn.click(
-            download_selected_clips,
-            inputs=[job_id_display, selected_clips, all_clips_data],
-            outputs=[zip_file_output_btn, status_text],
-        )
 
         timer = gr.Timer(2.0)
         timer.tick(
             monitor_progress,
             inputs=[job_id_display, all_clips_data],
-            outputs=[status_text, progress_text, clips_gallery, clips_count, cleanup_btn, all_clips_data],
+            outputs=[status_text, progress_text, clips_gallery, clips_count, all_clips_data],
             show_progress=False,
         )
 

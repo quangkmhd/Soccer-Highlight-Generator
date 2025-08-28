@@ -98,34 +98,4 @@ class SoccerAPIClient:
             logger.error(f"Error fetching clips data: {e}")
             return []
 
-    def download_clips_zip(self, job_id: str, filenames: List[str]) -> Optional[Path]:
-        """Download a ZIP archive of selected clips.
-        Returns Path to saved zip file or None on failure.
-        """
-        if not filenames:
-            return None
-        try:
-            dest_dir = Path(tempfile.mkdtemp(prefix=f"soccer_zip_{job_id}_"))
-            zip_path = dest_dir / f"{job_id}_clips.zip"
-            url = f"{self.base_url}/download/{job_id}/zip"
-            response = requests.post(url, json=filenames, stream=True, timeout=300)
-            if response.status_code != 200:
-                logger.error(f"Zip download failed: {response.text}")
-                return None
-            with open(zip_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-            return zip_path
-        except Exception as e:
-            logger.error(f"Error downloading zip: {e}")
-            return None
 
-    def cleanup_job(self, job_id: str) -> bool:
-        """Cleanup server-side job files."""
-        try:
-            response = requests.delete(f"{self.base_url}/cleanup/{job_id}", timeout=20)
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Error cleaning up job: {e}")
-            return False

@@ -13,8 +13,6 @@ from typing import Dict, List, Optional, Any
 import shutil
 import yaml
 import uvicorn
-import io
-import zipfile
 from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -86,18 +84,6 @@ async def process_video_async(job_id: str, video_path: Path):
         processing_service.fail_job(job_id, str(e))
 
 
-@app.on_event("shutdown")
-async def on_shutdown() -> None:
-    """Cleanup all job resources when the API server stops."""
-    try:
-        # Copy keys to list to avoid mutation during iteration
-        for jid in list(job_manager.jobs.keys()):
-            try:
-                job_manager.cleanup_job(jid)
-            except Exception as e:
-                logger.warning(f"Failed to cleanup job {jid} on shutdown: {e}")
-    except Exception as e:
-        logger.warning(f"Shutdown cleanup encountered an error: {e}")
 
 
 @app.post("/upload", response_model=Dict[str, str])
@@ -189,44 +175,8 @@ async def stream_clip(job_id: str, clip_filename: str):
     )
 
 
-@app.post("/download/{job_id}/zip")
-async def download_selected_clips(job_id: str, filenames: List[str]):
-    """Download selected clips as a single ZIP archive.
-
-    Parameters
-    ----------
-    job_id : str
-        Processing job identifier.
-    filenames : List[str]
-        List of clip filenames to include.
-    """
-    clips_dir = validate_job_and_get_clips_dir(job_manager, job_id)
-
-    # Create in-memory zip
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for fname in filenames:
-            clip_path = find_clip_file(clips_dir, fname)
-            if clip_path is None:
-                continue
-            zf.write(clip_path, arcname=fname)
-    buffer.seek(0)
-
-    return StreamingResponse(
-        buffer,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{job_id}_clips.zip"'}
-    )
 
 
-@app.delete("/cleanup/{job_id}")
-async def cleanup_job(job_id: str):
-    """Clean up temporary files for a job"""
-    
-    if not job_manager.cleanup_job(job_id):
-        raise HTTPException(status_code=404, detail="Job not found")
-    
-    return {"message": f"Job {job_id} cleaned up successfully"}
 
 
 @app.get("/")
@@ -242,7 +192,6 @@ async def root():
             "clips": "GET /clips/{job_id}",
             "gallery": "GET /clips/{job_id}/gallery",
             "stream": "GET /stream/{job_id}/{clip_filename}",
-            "cleanup": "DELETE /cleanup/{job_id}",
         }
     }
 
