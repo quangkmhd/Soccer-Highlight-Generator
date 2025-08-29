@@ -18,6 +18,11 @@ def _load_server_config() -> Dict[str, Any]:
 
 
 def _build_base_url_from_config(cfg: Dict[str, Any]) -> str:
+    # Prefer explicit public base URL when deploying for external users
+    public_base = cfg.get("public_base_url")
+    if isinstance(public_base, str) and public_base.strip():
+        return public_base.rstrip("/")
+
     server = cfg.get("server", {})
     host = str(server.get("host", "localhost"))
     port = int(server.get("port", 8000))
@@ -33,7 +38,7 @@ def main() -> None:
     base_url = _build_base_url_from_config(cfg)
     api_client = SoccerAPIClient(base_url=base_url)
     demo = create_demo(api_client)
-    demo.launch(server_name="0.0.0.0", server_port=7860, share=False, debug=True)
+    demo.launch(server_name="0.0.0.0", server_port=7860, share=True, debug=True)
 
 
 if __name__ == "__main__":

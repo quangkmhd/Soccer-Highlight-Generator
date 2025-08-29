@@ -40,12 +40,12 @@ windows:
 # --- Lọc Clip ---
 filtering:
   confidence_thresholds:
-    'Goal': 0.3
+    'Goal': 0.2
     'Foul': 0.6
-    'Card': 0.7
-    'Penalty': 0.6
-    'Direct free-kick': 0.75
-    'Corner': 0.75
+    'Card': 0.6
+    'Penalty': 0.7
+    'Direct free-kick': 0.7
+    'Corner': 0.7
 # --- Xếp hạng ---
 
 

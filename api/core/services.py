@@ -3,11 +3,16 @@ Business logic services for Soccer Action Spotting API
 """
 import asyncio
 import logging
-import tempfile
 import time
 import uuid
 from pathlib import Path
 from typing import Dict, Any, Optional
+import shutil
+
+root_dir = Path(__file__).resolve().parents[2]
+base_temp_dir = root_dir / "temp_dir"
+base_temp_dir.mkdir(parents=True, exist_ok=True)
+
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +29,10 @@ class JobManager:
         job_id = str(uuid.uuid4())
         
         # Create temporary directory
-        temp_dir = Path(tempfile.mkdtemp(prefix=f"soccer_api_{job_id}_"))
+        # Use project-local temp directory so it's visible in the workspace
+
+        temp_dir = base_temp_dir / f"soccer_api_{job_id}"
+        temp_dir.mkdir(parents=True, exist_ok=True)
         self.temp_dirs[job_id] = temp_dir
         
         # Initialize job data
@@ -50,6 +58,20 @@ class JobManager:
         if job_id in self.jobs:
             self.jobs[job_id].update(updates)
     
+    def cleanup_job(self, job_id: str) -> bool:
+        """Clean up job and temporary files"""
+        if job_id not in self.jobs:
+            return False
+
+        if job_id in self.temp_dirs:
+            # Keep the directory intact; just forget the reference.
+            _ = self.temp_dirs[job_id]
+            del self.temp_dirs[job_id]
+
+        # Remove job from memory
+        del self.jobs[job_id]
+        logger.info(f"Cleaned up job {job_id}")
+        return True
     
     def get_temp_dir(self, job_id: str) -> Optional[Path]:
         """Get temporary directory for job"""

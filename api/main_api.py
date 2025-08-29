@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
 FastAPI Soccer Action Spotting API
-Processes 2-hour videos and returns clips with real-time progress updates
 """
 import asyncio
 import logging
-import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -13,15 +11,19 @@ from typing import Dict, List, Optional, Any
 import shutil
 import yaml
 import uvicorn
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form
+import io
+import zipfile
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Form, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import gradio as gr
+from contextlib import asynccontextmanager
 
 # Import core modules
 from core.models import ProcessingStatus, ClipInfo
 from core.utils import get_clip_info_from_directory, find_clip_file, setup_logging, validate_job_and_get_clips_dir, validate_and_process_video_input
 from core.services import JobManager, ProcessingService
+from core.srt_export import generate_srt_from_clips
 
 # Import inference pipeline
 import sys
@@ -35,10 +37,24 @@ from inference.parallel_inference import run_inference_pipeline_parallel
 setup_logging()
 logger = logging.getLogger(__name__)
 
+# Initialize services
+job_manager = JobManager()
+processing_service = ProcessingService(job_manager)
+
+
+# Lifespan handler to replace deprecated on_event shutdown
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup section (no-op; logging already configured above)
+    yield
+    job_manager.cleanup_job(jid)
+
+# Create FastAPI app with lifespan
 app = FastAPI(
     title="Soccer Action Spotting API",
     description="Process soccer videos and generate action clips",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -50,40 +66,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize services
-job_manager = JobManager()
-processing_service = ProcessingService(job_manager)
-
-# Skip Gradio mounting for now - access via standalone mode
-# To use demo: python3 api/gradio_demo.py
-
-
 
 async def process_video_async(job_id: str, video_path: Path):
-    """Async video processing with progress updates"""
+    """Async video processing"""
     start_time = time.perf_counter()
-    
     try:
-        job_manager.update_job(job_id, status="processing", progress=0.1, message="Starting video processing...")
+        job_manager.update_job(job_id, status="processing", message="Processing video...")
         
         default_config_path = Path("inference/inference_config.yaml")
-        job_manager.update_job(job_id, progress=0.15, message="Using default configuration")
-        
-        job_manager.update_job(job_id, progress=0.2, message="Running AI models...")
         
         clips_dir = await asyncio.get_event_loop().run_in_executor(
             None, run_inference_pipeline_parallel, video_path, default_config_path
         )
-        
-        job_manager.update_job(job_id, progress=0.9, message="Finalizing clips...")
         
         processing_time = time.perf_counter() - start_time
         processing_service.complete_job(job_id, clips_dir, processing_time)
         
     except Exception as e:
         processing_service.fail_job(job_id, str(e))
-
-
 
 
 @app.post("/upload", response_model=Dict[str, str])
@@ -175,8 +175,143 @@ async def stream_clip(job_id: str, clip_filename: str):
     )
 
 
+@app.post("/download/{job_id}/zip")
+async def download_selected_clips(job_id: str, filenames: List[str]):
+    """Download selected clips as a single ZIP archive.
+
+    Parameters
+    ----------
+    job_id : str
+        Processing job identifier.
+    filenames : List[str]
+        List of clip filenames to include.
+    """
+    clips_dir = validate_job_and_get_clips_dir(job_manager, job_id)
+
+    # Create in-memory zip
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for fname in filenames:
+            clip_path = find_clip_file(clips_dir, fname)
+            if clip_path is None:
+                continue
+            zf.write(clip_path, arcname=fname)
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{job_id}_clips.zip"'}
+    )
 
 
+@app.post("/download/{job_id}/srt")
+async def download_selected_srt(job_id: str, filenames: List[str]):
+    """Download SRT subtitle file for selected clips.
+
+    Parameters
+    ----------
+    job_id : str
+        Processing job identifier.
+    filenames : List[str]
+        List of clip filenames to include in SRT.
+    """
+    clips_dir = validate_job_and_get_clips_dir(job_manager, job_id)
+    
+    # Validate selected filenames belong to this job
+    available_clips = get_clip_info_from_directory(clips_dir)
+    available_filenames = {clip.filename for clip in available_clips}
+    
+    # Filter to only include valid filenames (security measure)
+    valid_filenames = [fname for fname in filenames if fname in available_filenames]
+    
+    if not valid_filenames:
+        raise HTTPException(status_code=400, detail="No valid clips selected")
+    
+    # Get job info for video name
+    job_data = job_manager.get_job(job_id)
+    if not job_data:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Extract video name from path
+    video_path = Path(job_data.get("video_path", ""))
+    video_name = video_path.stem if video_path else job_id
+    
+    # Generate SRT file in project-local temp directory
+    temp_dir = root_dir / "temp_dir" / f"srt_{job_id}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        srt_path = generate_srt_from_clips(valid_filenames, video_name, temp_dir)
+        if not srt_path or not srt_path.exists():
+            raise HTTPException(status_code=500, detail="Failed to generate SRT file")
+        
+        return FileResponse(
+            srt_path,
+            media_type="text/plain",
+            filename=f"{video_name}_highlights.srt",
+            headers={"Content-Disposition": f'attachment; filename="{video_name}_highlights.srt"'}
+        )
+    except Exception as e:
+        logger.error(f"Error generating SRT for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate SRT file")
+
+
+@app.get("/download/{job_id}/srt/all")
+async def download_all_srt(job_id: str):
+    """Download SRT subtitle file for all clips in a job.
+
+    Parameters
+    ----------
+    job_id : str
+        Processing job identifier.
+    """
+    clips_dir = validate_job_and_get_clips_dir(job_manager, job_id)
+    
+    # Get all clips for this job
+    available_clips = get_clip_info_from_directory(clips_dir)
+    if not available_clips:
+        raise HTTPException(status_code=404, detail="No clips found for this job")
+    
+    all_filenames = [clip.filename for clip in available_clips]
+    
+    # Get job info for video name
+    job_data = job_manager.get_job(job_id)
+    if not job_data:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Extract video name from path
+    video_path = Path(job_data.get("video_path", ""))
+    video_name = video_path.stem if video_path else job_id
+    
+    # Generate SRT file in project-local temp directory
+    temp_dir = root_dir / "temp_dir" / f"srt_{job_id}"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    
+    try:
+        srt_path = generate_srt_from_clips(all_filenames, video_name, temp_dir)
+        if not srt_path or not srt_path.exists():
+            raise HTTPException(status_code=500, detail="Failed to generate SRT file")
+        
+        return FileResponse(
+            srt_path,
+            media_type="text/plain",
+            filename=f"{video_name}_highlights.srt",
+            headers={"Content-Disposition": f'attachment; filename="{video_name}_highlights.srt"'}
+        )
+    except Exception as e:
+        logger.error(f"Error generating SRT for job {job_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate SRT file")
+
+
+@app.delete("/cleanup/{job_id}")
+async def cleanup_job(job_id: str):
+    """Clean up temporary files for a job"""
+    
+    if not job_manager.cleanup_job(job_id):
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return {"message": f"Job {job_id} cleaned up successfully"}
 
 
 @app.get("/")
@@ -192,6 +327,7 @@ async def root():
             "clips": "GET /clips/{job_id}",
             "gallery": "GET /clips/{job_id}/gallery",
             "stream": "GET /stream/{job_id}/{clip_filename}",
+            "cleanup": "DELETE /cleanup/{job_id}",
         }
     }
 
