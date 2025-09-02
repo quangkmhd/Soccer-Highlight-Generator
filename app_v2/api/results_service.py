@@ -107,47 +107,6 @@ class ResultsService:
         """
         return self.clip_selections.get(job_id, [])
     
-    async def create_clips_zip(self, job_id: str, clips: List[HighlightClip], mode: str = "all", output_name: str | None = None) -> str:
-        """
-        Create ZIP file with selected clips
-        Returns path to the created ZIP file
-        """
-        try:
-            # Get clip selection if mode is "selected"
-            selected_clip_ids = []
-            if mode == "selected":
-                selected_clip_ids = await self.get_clip_selection(job_id)
-                if not selected_clip_ids:
-                    raise Exception("No clips selected for download")
-            
-            # Create temporary ZIP file
-            temp_dir = tempfile.mkdtemp()
-            base_name = output_name if output_name else f"highlights_{job_id}"
-            zip_path = os.path.join(temp_dir, f"{base_name}.zip")
-            
-            with zipfile.ZipFile(zip_path, 'w') as zip_file:
-                for clip in clips:
-                    # Skip non-selected clips when mode is "selected"
-                    if mode != "all" and clip.clip_id not in selected_clip_ids:
-                        continue
-
-                    # Resolve absolute path from preview_url (stored as path relative to CWD)
-                    abs_path = os.path.abspath(clip.preview_url)
-                    if not os.path.isfile(abs_path):
-                        logger.warning(f"Clip file not found: {abs_path}")
-                        continue
-
-                    # Add the actual video clip to the ZIP using its filename as the archive name
-                    arcname = os.path.basename(abs_path)
-                    zip_file.write(abs_path, arcname=arcname)
-            
-            logger.info(f"Created ZIP file for job {job_id} as {base_name}: {zip_path}")
-            return zip_path
-            
-        except Exception as e:
-            logger.error(f"Failed to create clips ZIP for job {job_id}: {e}")
-            raise
-    
     async def generate_metadata(self, job_id: str, clips: List[HighlightClip], format_type: str, mode: str = "all", output_name: str | None = None) -> str:
         """
         Generate metadata file in SRT or XML format

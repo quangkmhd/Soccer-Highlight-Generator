@@ -20,9 +20,7 @@ video:
   supported_formats: ["mp4", "avi", "mov", "mkv", "wmv", "flv", "webm", "mpg", "mpeg"]
   upload_dir: "uploads"
   max_file_size_mb: 2048
-  
-  # Note: Video codec compatibility is now tested dynamically using cv2.VideoCapture
-  # instead of maintaining a static list. See _test_framecv_compatibility() function.
+
 
 storage:
   video_metadata_file: "video_metadata.json"

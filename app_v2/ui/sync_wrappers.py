@@ -8,7 +8,7 @@ import gradio as gr
 from app_v2.ui.api_client import SoccerHighlightApp
 from app_v2.api.results_service import results_service
 from app_v2.api.config import get_api_base_url
-
+import shutil, tempfile
 # Create app instance
 app = SoccerHighlightApp()
 api_base = get_api_base_url()
@@ -35,32 +35,19 @@ def _extract_job_id(job_id_input):
 def auto_upload_on_file(file):
     """Automatically upload on file selection and hide the upload button."""
     video_id, status = asyncio.run(app.upload_file(file))
-    # Hide the manual upload button once the action is triggered
     return video_id, status
 
 def auto_register_on_path(path):
-    """Automatically register path on textbox change and hide the register button.
-    Removes absolute paths from the status message so Gradio does not mistake them
-    for files/directories and attempt to cache them (which caused IsADirectoryError)."""
+    """Automatically register path on textbox change and hide the register button."""
     video_id, status = asyncio.run(app.register_path(path))
-    # ---- Sanitize status ----
-    if status and isinstance(status, str):
-        # Replace the full absolute path with just the filename
-        status = status.replace(str(path), os.path.basename(str(path)))
-        # Also strip current working directory if it sneaks into the message
-        status = status.replace(os.getcwd(), '')
-        status = status.strip()
     return video_id, status
 
 def start_processing_sync(video_id):
     """Sync wrapper for processing start - also activates timer"""
-    # The API client now returns (job_id|None, message)
     job_id, message = asyncio.run(app.start_processing(video_id))
     
-    # Activate timer only if processing starts successfully
     timer_update = gr.update(active=True) if job_id else gr.update(active=False)
     
-    # The message will contain either the success or error string (e.g., "AI is busy")
     return job_id, message, timer_update
 
 def check_status_sync(job_id):
@@ -242,7 +229,6 @@ def download_selected_clips_sync(job_id, format_choice):
         desired_name = f"{vid}_highlights.{ext}"
 
         # Copy to temp file with desired name so DownloadButton serves correct filename
-        import shutil, tempfile, os
         temp_dir = tempfile.mkdtemp()
         dest_path = os.path.join(temp_dir, desired_name)
         shutil.copy(file_path, dest_path)

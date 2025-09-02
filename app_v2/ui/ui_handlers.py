@@ -4,6 +4,30 @@ UI event handlers, moved from interface.py to separate logic from layout.
 import gradio as gr
 import json
 import app_v2.ui.sync_wrappers as sw
+from app_v2.api.config import get_config
+import os
+# --- Client-side validation --- 
+def load_js_validation():
+    """Validate video file"""
+    config = get_config()
+    max_duration_seconds = config['video']['max_duration_hours'] * 3600
+    max_file_size_bytes = config['video']['max_file_size_mb'] * 1024 * 1024
+    
+    ui_dir = os.path.dirname(__file__)
+    js_path = os.path.join(ui_dir, "js", "validation.js")
+    
+    with open(js_path, "r") as f:
+        js_template = f.read()
+        
+    js_script = f"""
+    <script>
+    {js_template}
+    document.addEventListener('DOMContentLoaded', (event) => {{
+        setupVideoValidation('video-file-input', {max_duration_seconds}, {max_file_size_bytes});
+    }});
+    </script>
+    """
+    return js_script
 
 def toggle_clip(checked, selection, clip_id, job_id):
     """Update selection list and sync to backend"""
@@ -30,7 +54,7 @@ def refresh(job_id, selection, max_clips):
         # No job yet – hide all clips
         updates = ["Chưa có job", f"Đã chọn: {selection}"]
         for _ in range(max_clips):
-            updates.extend([gr.update(visible=False), gr.update(visible=False), ""])
+            updates.extend([gr.update(value=None, visible=False), gr.update(visible=False), None])
         updates.append(gr.update(visible=False))  # selection_controls
         updates.append(gr.update(active=False))   # timer
         return updates
@@ -42,7 +66,7 @@ def refresh(job_id, selection, max_clips):
         # Hide clips until job is finished (avoid calling /results prematurely)
         updates = [status_text, f"Đã chọn: {selection}"]
         for _ in range(max_clips):
-            updates.extend([gr.update(visible=False), gr.update(visible=False), ""])
+            updates.extend([gr.update(value=None, visible=False), gr.update(visible=False), None])
         updates.append(gr.update(visible=False))  # selection_controls
         # Keep timer active while still queued/processing
         timer_active = status_code not in ("failed", "completed")

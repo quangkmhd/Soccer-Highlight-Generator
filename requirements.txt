@@ -7,7 +7,7 @@ timm==0.9.2
 # Data processing
 pandas==2.3.1
 scipy==1.15.3
-scikit-learn==1.7.1
+scikit-learn==1.6.1
 
 # Video processing
 moviepy==1.0.3

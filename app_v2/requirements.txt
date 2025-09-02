@@ -1,3 +1,4 @@
+#python3.10
 fastapi==0.116.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6

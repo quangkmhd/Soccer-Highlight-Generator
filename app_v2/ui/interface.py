@@ -3,50 +3,18 @@ Gradio interface creation and layout
 """
 import os
 import gradio as gr
-import app_v2.ui.sync_wrappers as sw
 from app_v2.ui import ui_handlers as uh
 from app_v2.ui.sync_wrappers import start_processing_sync, auto_upload_on_file, auto_register_on_path
-from app_v2.api.config import get_supported_video_formats, get_config
+from app_v2.api.config import get_supported_video_formats
 
-# --- Client-side validation --- 
-def load_js_validation():
-    # Get config value
-    config = get_config()
-    max_duration_seconds = config['video']['max_duration_hours'] * 3600
-    max_file_size_bytes = config['video']['max_file_size_mb'] * 1024 * 1024
-    
-    # Get path to JS file
-    ui_dir = os.path.dirname(__file__)
-    js_path = os.path.join(ui_dir, "js", "validation.js")
-    
-    # Read the JS file content
-    with open(js_path, "r") as f:
-        js_template = f.read()
-        
-    # Create the final script to be injected
-    # This includes the file content plus the function call with the correct parameters
-    js_script = f"""
-    <script>
-    {js_template}
-    document.addEventListener('DOMContentLoaded', (event) => {{
-        setupVideoValidation('video-file-input', {max_duration_seconds}, {max_file_size_bytes});
-    }});
-    </script>
-    """
-    return js_script
 
 # --- Auto handlers to hide buttons and trigger upload/register automatically ---
-# Auto handlers are defined in `app_v2/ui/sync_wrappers.py` and imported above.
-
-
 def create_gradio_interface():
     """Create and return the Gradio interface"""
-    
-    js_validation_script = load_js_validation()
-
-    with gr.Blocks(title="Soccer Highlight Detection", theme=gr.themes.Soft(), head=js_validation_script) as demo:
+    with gr.Blocks(title="Soccer Highlight Detection", theme=gr.themes.Soft(), head=uh.load_js_validation()) as demo:
+        
         gr.Markdown("# ⚽ Soccer Highlight Detection")
-        gr.Markdown("Phát hiện tự động các pha bóng nổi bật trong video bóng đá")
+        gr.Markdown("Auto create metadata, clips highlights for soccer video")
         
         with gr.Row():
             # Left Column
@@ -57,7 +25,7 @@ def create_gradio_interface():
                 upload_method = gr.Radio(
                     choices=["Upload File", "Input Path"],
                     value="Upload File",
-                    label="Chọn phương thức"
+                    label="Choses upload method"
                 )
                 
                 # File upload section
@@ -66,34 +34,31 @@ def create_gradio_interface():
                         label="Upload file video",
                         file_types=get_supported_video_formats(),
                         type="filepath",
-                        elem_id="video-file-input"  # Add element ID for JS targeting
+                        elem_id="video-file-input" 
                     )
                 
                 # Path input section  
                 with gr.Group(visible=False) as path_input_group:
                     path_input = gr.Textbox(
-                        label="Đường dẫn video",
+                        label="Input path video",
                         placeholder="/path/to/video.mp4"
                     )
                    
-                # Status displays
+                # Status 
                 video_id_display = gr.Textbox(label="Video ID", interactive=False, visible=False)
-                upload_status = gr.Textbox(label="Trạng thái Upload", interactive=False)
+                upload_status = gr.Textbox(label="Upload status", interactive=False)
 
                 process_btn = gr.Button("🎬 Start Processing", variant="primary", size="lg")
 
                 # Job status
                 job_id_display = gr.Textbox(label="Job ID", interactive=False, visible=False)
-                job_status = gr.Textbox(label="Trạng thái xử lý", interactive=False)
+                job_status = gr.Textbox(label="Processing status", interactive=False)
 
             # Right Column
             with gr.Column(scale=2):
                 gr.Markdown("## 🎥 Highlight Clips")
 
-                # Results display with selection controls
                 with gr.Group() as clips_group:
-                    gr.Markdown("### Kết quả highlights")
-
                     # ----- State & Display for selections -----
                     selected_state = gr.State([])
                     selection_display = gr.Markdown("Đã chọn: []", visible=False)
@@ -115,8 +80,8 @@ def create_gradio_interface():
 
                     # Selection controls
                     with gr.Row(visible=False) as selection_controls:
-                        select_all_btn = gr.Button("✅ Chọn tất cả", variant="secondary")
-                        deselect_all_btn = gr.Button("❌ Bỏ chọn tất cả", variant="secondary")
+                        select_all_btn = gr.Button("✅ Select all", variant="secondary")
+                        deselect_all_btn = gr.Button("❌ Deselect all", variant="secondary")
 
                 # Download section
                 gr.Markdown("## 📥 Download Options")
@@ -130,13 +95,13 @@ def create_gradio_interface():
                     with gr.Column(scale=1):
                         # Button 1: create metadata file (generate)
                         create_meta_btn = gr.Button(
-                            "📝 Tạo file metadata",
+                            "📝 Create metadata file",
                             variant="secondary",
                             interactive=False  # enable khi đã chọn clip
                         )
                         # Button 2: actual download button, không có callback
                         download_meta_btn = gr.DownloadButton(
-                            "📥 Tải metadata",
+                            "📥 Download metadata",
                             variant="primary",
                             interactive=False  # enable + có value sau khi tạo file
                         )
@@ -157,7 +122,6 @@ def create_gradio_interface():
                     )
                 
         # Auto-refresh timer for automatic results loading
-        # Timer is active only when there's an active job
         timer = gr.Timer(2.0, active=False)  # Check every 2 seconds, initially inactive
 
         # Event handlers
@@ -182,7 +146,7 @@ def create_gradio_interface():
         process_btn.click(
             start_processing_sync,
             inputs=[video_id_display],
-            outputs=[job_id_display, job_status, timer]  # Also activate timer when processing starts
+            outputs=[job_id_display, job_status, timer]
         )
        
         # Build outputs list for timer (after all components created)

@@ -96,13 +96,12 @@ async def start_processing(video_id: str):
             # Submit job to processing queue
             job_id = await job_manager.submit_job(video_id, video_path)
             
-            # Get initial job status
             job_status = await job_manager.get_job_status(job_id)
             
             return ProcessingResponse(
                 job_id=job_id,
                 status=job_status["status"],
-                message="Job submitted to processing queue"
+                message="Wait for processing to complete... (around 15-20 minutes)"
             )
         except JobInProgressError:
             raise HTTPException(

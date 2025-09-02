@@ -20,7 +20,7 @@ class SoccerHighlightApp:
     async def upload_file(self, file) -> Tuple[str, str]:
         """Upload video file to API"""
         if file is None:
-            return "", "Vui lòng chọn file video"
+            return "", "Please upload a video file"
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -36,14 +36,14 @@ class SoccerHighlightApp:
                             return result["video_id"], f"{result['message']}"
                         else:
                             error = await response.text()
-                            return "", f"Lỗi upload: {error}"
+                            return "", f"Error: {error}"
         except Exception as e:
-            return "", f"Lỗi: {str(e)}"
+            return "", f"Error: {str(e)}"
     
     async def register_path(self, path: str) -> Tuple[str, str]:
         """Register video path with API"""
         if not path.strip():
-            return "", "Vui lòng nhập đường dẫn video"
+            return "", "Please input a video path"
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -56,14 +56,14 @@ class SoccerHighlightApp:
                         return result["video_id"], f"{result['message']}"
                     else:
                         error = await response.text()
-                        return "", f"Lỗi đăng ký: {error}"
+                        return "", f"Error: {error}"
         except Exception as e:
-            return "", f"Lỗi: {str(e)}"
+            return "", f"Error: {str(e)}"
     
     async def start_processing(self, video_id: str) -> Tuple[Optional[str], str]:
         """Start video processing"""
         if not video_id:
-            return None, "❌ Chưa có video để xử lý"
+            return None, "No video to process"
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -71,23 +71,22 @@ class SoccerHighlightApp:
                     if response.status == 200:
                         result = await response.json()
                         self.current_job_id = result["job_id"]
-                        return result["job_id"], f"Bắt đầu xử lý: {result['message']}"
+                        return result["job_id"], f"{result['message']}"
                     else:
-                        # Try to parse JSON error detail for cleaner messages
                         try:
                             error_json = await response.json()
-                            detail = error_json.get("detail", "Unknown processing error")
+                            detail = error_json.get("detail")
                             return None, f"{detail}"
                         except Exception:
                             error_text = await response.text()
-                            return None, f"Lỗi xử lý: {error_text}"
+                            return None, f"Error: {error_text}"
         except Exception as e:
-            return None, f"Lỗi kết nối: {str(e)}"
+            return None, f"Error: {str(e)}"
     
     async def check_status(self, job_id: str) -> Tuple[str, str, str]:
         """Check job processing status"""
         if not job_id:
-            return "Chưa có job", "0%", ""
+            return "Chưa có job"""
             
         try:
             async with aiohttp.ClientSession() as session:
@@ -99,9 +98,9 @@ class SoccerHighlightApp:
                         
                         status_text = {
                             "queued": "Đang chờ xử lý",
-                            "processing": "Đang xử lý",
-                            "completed": "Hoàn thành",
-                            "failed": "Thất bại"
+                            "processing": "Wait for processing to complete... (around 15-20 minutes)",
+                            "completed": "Done",
+                            "failed": "Failed"
                         }.get(status, status)
                         
                         progress_text = f"{progress}%" if progress > 0 else "0%"
