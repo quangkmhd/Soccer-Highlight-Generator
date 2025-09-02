@@ -460,7 +460,6 @@ class HighlightExtractor:
                 merge_action = self._should_merge_or_trim(current_primary_label, clip_primary_label)
 
                 if merge_action == "merge":
-                    # Merge hai clips cùng loại
                     current_clip['end_time'] = max(current_clip['end_time'], clip['end_time'])
                     current_events.extend(clip['events'])
                     group.append(clip)

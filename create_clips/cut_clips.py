@@ -69,7 +69,7 @@ def determine_clip_event_name(highlight, rules_config):
     # Determine naming based on goal confidence and qualifying pre-events
     if qualifying_pre_event:
         if goal_confidence >= goal_naming_threshold:
-            return f"{qualifying_pre_event} → Goal"
+            return f"{qualifying_pre_event}->Goal"
         else:
             return qualifying_pre_event
     
