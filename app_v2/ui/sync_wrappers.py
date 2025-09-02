@@ -3,6 +3,7 @@ Synchronous wrappers for async API client functions
 Required for Gradio compatibility
 """
 import asyncio
+import os
 import gradio as gr
 from app_v2.ui.api_client import SoccerHighlightApp
 from app_v2.api.results_service import results_service
@@ -38,8 +39,17 @@ def auto_upload_on_file(file):
     return video_id, status
 
 def auto_register_on_path(path):
-    """Automatically register path on textbox change and hide the register button."""
+    """Automatically register path on textbox change and hide the register button.
+    Removes absolute paths from the status message so Gradio does not mistake them
+    for files/directories and attempt to cache them (which caused IsADirectoryError)."""
     video_id, status = asyncio.run(app.register_path(path))
+    # ---- Sanitize status ----
+    if status and isinstance(status, str):
+        # Replace the full absolute path with just the filename
+        status = status.replace(str(path), os.path.basename(str(path)))
+        # Also strip current working directory if it sneaks into the message
+        status = status.replace(os.getcwd(), '')
+        status = status.strip()
     return video_id, status
 
 def start_processing_sync(video_id):
