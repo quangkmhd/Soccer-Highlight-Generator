@@ -479,7 +479,11 @@ class HighlightExtractor:
                     if trimmed_clip:
                         # Chèn phần còn lại ngay sau vị trí hiện tại để đảm bảo thứ tự theo thời gian
                         clips_sorted.insert(i, trimmed_clip)
-                    # Không tăng i để xử lý phần vừa chèn (nếu có) hoặc clip tiếp theo
+                        # Đảm bảo tiến độ vòng lặp: đã chèn clip mới -> chuyển sang clip tiếp theo
+                        i += 1
+                        continue
+                    # Nếu trimmed_clip là None, clip bị loại bỏ hoàn toàn
+                    # Tiếp tục xử lý clip hiện tại ở cùng chỉ số i (đã dịch sang clip kế tiếp)
                     continue
                 else:
                     # Clip mới ưu tiên cao hơn -> finalize current và chuyển sang clip mới
