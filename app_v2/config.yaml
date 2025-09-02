@@ -1,0 +1,31 @@
+app:
+  name: "Soccer Highlight Detection API"
+  version: "2.0.0"
+  debug: true
+  host: "0.0.0.0"
+  port: 8000
+
+gradio:
+  server_name: "0.0.0.0"
+  server_port: 7860
+  debug: true
+  share: false
+
+api:
+  base_url: "http://localhost:8000/api/v2"
+
+video:
+  max_duration_hours: 3
+  # Common video formats (actual compatibility tested dynamically via FrameCV)
+  supported_formats: ["mp4", "avi", "mov", "mkv", "wmv", "flv", "webm", "mpg", "mpeg"]
+  upload_dir: "uploads"
+  max_file_size_mb: 2048
+  
+  # Note: Video codec compatibility is now tested dynamically using cv2.VideoCapture
+  # instead of maintaining a static list. See _test_framecv_compatibility() function.
+
+storage:
+  video_metadata_file: "video_metadata.json"
+  
+processing:
+  max_concurrent_jobs: 1
