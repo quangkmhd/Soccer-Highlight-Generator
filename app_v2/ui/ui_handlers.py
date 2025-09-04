@@ -128,13 +128,13 @@ def select_all_ui(*args):
     # Last arg is job_id
     job_id = args[-1]
     clip_ids = [cid for cid in args[:-1] if cid]
-    # Update backend
+    checkbox_updates = []
     try:
         _ = sw.select_all_clips_sync(job_id)
     except Exception:
         pass
-    # Build updates: selected_state, selection_display, checkbox values, download button
-        checkbox_updates = [gr.update(value=True) if cid else gr.update(value=False) for cid in args[:-1]]
+    # Build checkbox updates for each clip
+    checkbox_updates = [gr.update(value=True) if cid else gr.update(value=False) for cid in args[:-1]]
     create_btn_update = gr.update(interactive=bool(clip_ids))
     download_btn_update = gr.update(interactive=False, value=None)
     return [clip_ids, f"Đã chọn: {clip_ids}", *checkbox_updates, create_btn_update, download_btn_update]
@@ -146,7 +146,7 @@ def deselect_all_ui(*args):
         _ = sw.deselect_all_clips_sync(job_id)
     except Exception:
         pass
-        checkbox_updates = [gr.update(value=False) for _ in args[:-1]]
+    checkbox_updates = [gr.update(value=False) for _ in args[:-1]]
     create_btn_update = gr.update(interactive=False)
     download_btn_update = gr.update(interactive=False, value=None)
     return [[], "Đã chọn: []", *checkbox_updates, create_btn_update, download_btn_update]
