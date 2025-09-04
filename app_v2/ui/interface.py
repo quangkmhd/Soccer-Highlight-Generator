@@ -88,7 +88,7 @@ def create_gradio_interface():
                 # Download controls defined BEFORE we attach events that reference the button
                 with gr.Row():
                     download_format = gr.Radio(
-                        choices=["SRT", "XML"],
+                        choices=["SRT"],
                         value="SRT",
                         label="Định dạng tải xuống"
                     )
