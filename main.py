@@ -43,13 +43,7 @@ def main():
     import multiprocessing
     multiprocessing.set_start_method('spawn', force=True)
     
-    try:
-        # Gọi hàm parallel processing với đối tượng Path
-        output_dir = run_inference_pipeline_parallel(video_path, config_path)
-        print(f"Xử lý hoàn tất với parallel processing. Kết quả được lưu tại: {output_dir}")
-        return 0
-    except Exception as e:
-        print(f"Lỗi trong quá trình xử lý: {e}")
-        return 1
+    run_inference_pipeline_parallel(video_path, config_path)
+
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

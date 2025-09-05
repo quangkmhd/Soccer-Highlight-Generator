@@ -40,6 +40,29 @@ Outputs:
 
 ---
 
+## Web Demo (`app_v2`)
+
+The repository also ships with a small web application located in `app_v2/` that wraps the full pipeline behind a FastAPI REST API and a Gradio-powered front-end.
+
+```bash
+# 1.  Install extra dependencies
+pip install -r app_v2/requirements.txt
+
+# 2.  Start the API server (port 8000)
+python3 -m uvicorn app_v2.main_api:app --reload --port 8000
+#     or simply
+python3 app_v2/main_api.py
+
+# 3.  Launch the Gradio UI in a separate terminal (port 7860)
+python3 app_v2/gradio_app.py
+```
+
+The Gradio interface will print a local URL (default: http://localhost:7860). Open it in your browser, upload a match video and wait while the server processes the file. Once finished, the ranked highlight list together with preview clips will be displayed.
+
+The underlying REST endpoints are documented at `http://localhost:8000/docs` (FastAPI Swagger UI).
+
+---
+
 ## Project Structure
 
 | Path                      | Purpose                                                              |
