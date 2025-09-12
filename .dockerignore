@@ -1,0 +1,37 @@
+# Use Docker CLI to ignore files/folders that do not need to be sent to the Docker daemon
+# Python cache & build artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Git & editor files
+.git/
+.gitignore
+.vscode/
+
+# Large datasets / model weights that should be mounted instead of being baked into the image
+weight/
+CALF_segmentation/Download/
+input_video/
+uploads/
+
+# Media files
+*.mp4
+*.avi
+*.mkv
+*.mov
+*.jpg
+*.jpeg
+*.png
+*.bmp
+*.gif
+
+# Misc
+README.md
+Dockerfile
+docker-compose.yml

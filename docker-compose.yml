@@ -1,0 +1,22 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: soccer-highlight
+    restart: unless-stopped
+    # Enable GPU access inside the container (Docker 23+ with NVIDIA Container Toolkit)
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+    ports:
+      - "8000:8000"   # FastAPI
+      - "7860:7860"   # Gradio
+    volumes:
+      - ./input_video:/app/input_video
+      - ./pipeline_output:/app/pipeline_output
+      - ./weight:/app/weight          # Giữ weights bên ngoài
+      - ./app_v2/uploads:/app/app_v2/uploads
