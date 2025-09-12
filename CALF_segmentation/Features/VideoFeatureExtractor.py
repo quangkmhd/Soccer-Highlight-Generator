@@ -80,7 +80,21 @@ class VideoFeatureExtractor():
 
         if "PT" in self.back_end:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            resnet = models.resnet152(weights=models.ResNet152_Weights.IMAGENET1K_V2).to(self.device)
+            # Load ResNet152 weights; configurable via ENV `RESNET152_WEIGHT_PATH`
+            from pathlib import Path
+            project_root_weight = Path(__file__).resolve().parents[2] / "weight" / "resnet" / "resnet152-f82ba261.pth"
+            root_weight = Path("/weight/resnet/resnet152-f82ba261.pth")
+            env_weight = os.getenv("RESNET152_WEIGHT_PATH")
+            # pick first existing among env, project-root weight, or /weight mount
+            weight_candidates = [env_weight, project_root_weight, root_weight]
+            weight_path = next((str(p) for p in weight_candidates if p and Path(p).exists()), str(project_root_weight))
+            resnet = models.resnet152().to(self.device)
+            if os.path.exists(weight_path):
+                state_dict = torch.load(weight_path, map_location=self.device)
+                resnet.load_state_dict(state_dict)
+            else:
+                logging.warning(f"Custom ResNet weight file not found at {weight_path}. Falling back to torchvision pretrained weights.")
+                resnet = models.resnet152(weights=models.ResNet152_Weights.IMAGENET1K_V2).to(self.device)
 
             # Tương đương với avg_pool trong TF2
             self.model = torch.nn.Sequential(
