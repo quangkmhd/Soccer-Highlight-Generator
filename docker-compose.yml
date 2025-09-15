@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: soccer-highlight:latest
     container_name: soccer-highlight
     restart: unless-stopped
     # Enable GPU access inside the container (Docker 23+ with NVIDIA Container Toolkit)

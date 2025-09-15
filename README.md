@@ -51,6 +51,17 @@ Outputs:
 # From repository root
 #  Build image + run container (foreground)
 docker compose up --build
+# or
+chmod +x docker-run.sh
+
+#Mặc định chạy cả FastAPI + Gradio
+./docker-run.sh
+
+#Chỉ chạy API
+./docker-run.sh api
+
+#Chỉ chạy Gradio
+./docker-run.sh gradio
 ```
 
 
