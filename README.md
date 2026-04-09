@@ -1,178 +1,168 @@
-# Soccer Action – End-to-End Highlight Clips Generation
+# Soccer Highlight Generator ⚽
 
-This repository detects football (soccer) events in a single match video and automatically creates **ranked highlights**.
+![Python](https://img.shields.io/badge/Python-3.10.12-3776AB?style=flat-square&logo=python&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-EE4C2C?style=flat-square&logo=pytorch&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Supported-2496ED?style=flat-square&logo=docker&logoColor=white)
 
-Modules:
+End-to-end automated highlight clip generation for full soccer matches. Built for sports analysts, broadcasters, and football fans who want to extract ranked, key moments (goals, shots, passes) in minutes instead of manually scrubbing through hours of footage.
 
-1. **ball_action_spotting/** – classifies on-ball actions (pass, shot…) & general actions.
-2. **CALF_segmentation/** – segments camera views (main, close-up, goal-line…).
-3. **rules/** – merges predictions, applies rule-based windows & scoring to pick best moments.
-4. **create_clips/** – cuts and (optionally) merges highlight clips.
-5. **inference/** – orchestration & parallel processing helpers.
-6. **app_v2/** – REST API server & Gradio web interface for video upload and processing v2.
-7. **main.py** – one-liner CLI entry-point.
+![Soccer Highlight Pipeline Demo](assets/step_1_demo.png)
 
----
+## 📸 How It Works
 
-## Quick Start
+Explore the step-by-step process of our automated soccer highlight generation:
 
+| Step 1: Video Upload | Step 2: Processing & Analysis |
+|:---:|:---:|
+| ![Uploading and configuring parameters](assets/step_2_upload.png) | ![Action spotting and camera view analysis in progress](assets/step_3_processing.png) |
+| *Intuitive Gradio Web UI for easy video uploads.* | *Real-time visualization of the AI inference pipeline.* |
+
+| Step 3: Rule-Based Scoring | Step 4: Final Highlight Reels |
+|:---:|:---:|
+| ![Detailed JSON results including action scores](assets/step_4_results.json.png) | ![Automatically trimmed and ranked highlight clips](assets/step_5_final_clips.png) |
+| *Exhaustive ranking of every spotted moment.* | *High-quality, ready-to-share ranked clips.* |
+
+| Step 5: Video Playback |
+|:---:|
+| ![Playing back the generated highlight reel](assets/step_6_playback.png) |
+| *Direct playback and review of clips within the interface.* |
+
+
+
+
+### 🛠️ Technical Deep Dive
+For detailed insights into the model's inference performance and pipeline state, refer to our technical logs:
+- **[Inference Detail Report 1 (PDF)](assets/inference_detail_1.pdf)**: Detailed breakdown of action spotting timestamps.
+- **[Inference Detail Report 2 (PDF)](assets/inference_detail_2.pdf)**: Analysis of camera segmentation and scoring logic.
+
+## ✨ Key Features
+
+- **Spot actions automatically**: Detect critical on-ball actions like shots, passes, crosses, and tackles using a highly trained action-spotting neural network.
+- **Understand camera context**: Employ CALF segmentation to classify views (main camera, close-up, goal-line) to ensure highlights are visually appealing.
+- **Rank the best moments**: Utilize a sophisticated rule-based scoring engine to evaluate and rank clips based on action density and context.
+- **Generate ready-to-share clips**: Automatically cut, trim, and merge the highest-ranked moments into a continuous highlight reel.
+- **Process via REST API**: Integrate seamlessly into existing media pipelines using the robust FastAPI backend.
+- **Interact via Web UI**: Upload videos and configure parameters easily using the built-in Gradio interface.
+- **Accelerate with GPU Docker**: Leverage full NVIDIA GPU pass-through in an isolated container for massive inference speedups.
+
+## 🚀 Quick Start
+
+Generate your first highlight reel from a match video.
+
+1. **Install environment and dependencies**:
+   ```bash
+   git clone https://github.com/your-repo/soccer-highlight.git
+   cd soccer-highlight
+   python3 -m venv sh_venv && source sh_venv/bin/activate
+   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+   pip install -r requirements.txt
+   ```
+
+2. **Download Weights**:
+   Ensure you place the downloaded weights in the `weight/` directory (action, ball, camera, resnet folders).
+
+3. **Run the CLI pipeline**:
+   ```bash
+   python3 main.py ./data/sample_match.mp4
+   ```
+
+**Expected Output:**
+The system will extract features, detect actions, score them, and output:
+- A ranked JSON list at `highlight_results/sample_match_highlights.json`.
+- Automatically trimmed `.mp4` video files in the `clips/` directory containing the top 5 highlights of the match!
+
+## 📦 Installation
+
+### Method 1: Docker (GPU Optimized)
+This is the recommended approach to avoid PyTorch/CUDA version conflicts.
 ```bash
-# 1.  Install Python 3.10.12
-python3 -m venv sh_venv && source sh_venv/bin/activate   
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128 
-pip install -rrequirements.txt  
+# Build the image
+docker-compose build
 
-# 2.  Download / place model weights
-weight/
-  ├─ action/             # Action spotting model weights
-  ├─ ball/               # Ball detection model weights  
-  ├─ camera/             # Camera segmentation model weights
-  └─ resnet/             # ResNet feature extraction weights
-
-# 3.  Run full pipeline on one video
-python3 main.py path/to/match.mp4 
-```
-
-Outputs:
-
-* `pipeline_output/<video>/` – raw model predictions and merged JSON.
-* `highlight_results/<video>_highlights.json` – ranked highlight list.
-* `clips/` – extracted video snippets (if `create_clips` enabled in config).
-
----
-
-## Docker (GPU) Quick Start
-
-> Requires: Docker ≥ 20.10, NVIDIA driver + [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
->
-> This will build the image, pass through all GPUs, and launch both the REST API (8000) and Gradio UI (7860).
-
-```bash
-# From repository root
-#  Build image + run container (foreground)
-docker compose up --build
-# or
-chmod +x docker-run.sh
-
-#Mặc định chạy cả FastAPI + Gradio
+# Run the container (starts both API on 8000 and Gradio on 7860)
 ./docker-run.sh
-
-#Chỉ chạy API
-./docker-run.sh api
-
-#Chỉ chạy Gradio
-./docker-run.sh gradio
 ```
 
-
-
-## Web Application (`app_v2`)
-
-The repository includes a comprehensive web application with REST API and modern UI for video processing and highlight generation.
-
-### Features
-- **FastAPI REST API** with async job processing and queue management
-- **Gradio Web Interface** for easy video upload and result visualization
-- **Video Management** supporting multiple formats (mp4, avi, mov, mkv, etc.)
-- **Real-time Processing Status** with job queue monitoring
-- **Clip Preview & Export** with SRT/XML subtitle generation
-- **Configurable Settings** via YAML configuration
-
-### Quick Start
-
+### Method 2: Local Setup
 ```bash
-# 1. Install dependencies
-pip install -r app_v2/requirements.txt
-
-# 2. Start API server (port 8000)
-python3 app_v2/main_api.py
-# or: uvicorn app_v2.main_api:app --host 0.0.0.0 --port 8000
-
-# 3. Launch Gradio UI (port 7860)
-python3 app_v2/gradio_app.py
+python3 -m venv env
+source env/bin/activate
+pip install -r requirements.txt
 ```
 
-**Access Points:**
-- Gradio UI: [http://localhost:7860](http://localhost:7860)
-- API Documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
-- API Base: `http://localhost:8000/api/v2`
+## 💡 Usage Examples
 
-### API Endpoints
+### Example 1: Full Pipeline via CLI
+**Scenario:** You have a 90-minute match and want to run the full pipeline in the background.
+```bash
+python3 main.py path/to/full_match.mp4 --top-k 10 --merge-clips
+```
+**Output:** Analyzes the match, selects the top 10 moments, and merges them into a single `final_highlights.mp4` video.
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/upload/file` | Upload video file (multipart) |
-| `POST` | `/upload/path` | Register local file path |
-| `GET` | `/video/{video_id}` | Get video metadata |
-| `POST` | `/process/{video_id}` | Start AI processing |
-| `GET` | `/status/{job_id}` | Check processing status |
-| `GET` | `/results/{job_id}` | Get highlight results |
-| `GET` | `/clips/{job_id}/{filename}` | Stream video clips |
-| `GET` | `/download/metadata` | Export SRT/XML subtitles |
+### Example 2: Using the Gradio Web UI
+**Scenario:** You want a visual interface to upload videos and tweak scoring parameters.
+```bash
+cd app_v2
+python3 ui.py
+```
+**Output:** Starts a web server. Navigate to `http://localhost:7860`, upload your video, set the rules (e.g., "prioritize shots over passes"), and click "Generate". The UI will display the resulting video.
 
-### Configuration
+### Example 3: API Integration
+**Scenario:** Trigger highlight generation from a separate backend service.
+```bash
+# Start the API server
+cd app_v2 && uvicorn server:app --host 0.0.0.0 --port 8000
 
-Edit `app_v2/config.yaml` to customize:
-- Server ports and host settings
-- Video upload limits and supported formats
-- Processing queue configuration
-- Storage paths and metadata handling
+# Send a POST request
+curl -X POST "http://localhost:8000/process" \
+     -H "Content-Type: application/json" \
+     -d '{"video_path": "/data/match.mp4", "clip_count": 5}'
+```
+**Output:** Returns a JSON response with job status and paths to the generated clip artifacts.
 
----
+### Example 4: Evaluating Custom Rules
+**Scenario:** You want to tweak the scoring logic to give a higher penalty to clips with too many close-up shots (which disrupt the flow of play).
+Modify `rules/scoring.py` to adjust the camera penalty weights, then rerun the rule engine purely on existing predictions without re-running the heavy neural networks:
+```bash
+python3 -m rules.evaluate --predictions pipeline_output/match/preds.json
+```
 
-## Project Structure
+## 🛠️ Troubleshooting
 
-| Path | Purpose |
-|------|----------|
-| `ball_action_spotting/` | PyTorch models for on-ball & general actions. See its `README.md`. |
-| `CALF_segmentation/` | Camera view segmentation (ResNet + CALF). See its `README.md`. |
-| `rules/` | Rule engine & scoring; tune behaviour in `rules/config.yaml`. |
-| `create_clips/` | FFmpeg helpers to cut & merge highlight clips. |
-| `inference/` | Parallel pipeline (`parallel_inference.py`) & YAML config. |
-| `app_v2/` | **Web application with REST API & Gradio UI** |
-| `├── api/` | FastAPI routes, job management, database, services |
-| `├── ui/` | Gradio interface, API client, event handlers |
-| `├── config.yaml` | Application configuration (ports, limits, paths) |
-| `├── main_api.py` | FastAPI server entrypoint |
-| `├── gradio_app.py` | Gradio UI entrypoint |
-| `weight/` | **Model weights directory** |
-| `├── action/` | Action spotting model files |
-| `├── ball/` | Ball detection model files |
-| `├── camera/` | Camera segmentation model files |
-| `├── resnet/` | ResNet feature extraction weights |
-| `main.py` | CLI entry-point for direct pipeline execution |
+- **`CUDA error: out of memory` during ResNet extraction**
+  - *Cause:* The batch size for feature extraction is too large for your GPU.
+  - *Fix:* Decrease the batch size in `inference/config.yaml` from 64 to 16 or 8.
+- **No clips generated / Empty JSON**
+  - *Cause:* The model weights are missing or placed in the wrong directory.
+  - *Fix:* Verify that `weight/action/`, `weight/camera/`, etc., contain the `.pt` files.
+- **FFmpeg Error during clip creation**
+  - *Cause:* FFmpeg is not installed on the host system.
+  - *Fix:* Run `sudo apt-get install ffmpeg` (Ubuntu) or use the Docker image which has it pre-installed.
 
----
+## 📚 Documentation Links
 
-## Configuration
+Maximize your clip generation workflow by diving deep into our core modules:
 
-### Pipeline Configuration
-Edit `inference/inference_config.yaml` to point to your weight files and tweak GPU, batch sizes, FPS, etc. Each sub-section (`ball_action_params`, `camera_params`, `rules`) matches arguments of underlying scripts.
+- **[Action Spotting Architecture Overview](./docs/ACTION_SPOTTING.md)**
+  Discover the neural network design that powers our automated moment detection. This guide details the data flow as the model extracts spatiotemporal features from full matches to accurately spot shots, passes, and tackles at lightning speed.
 
-`rules/config.yaml` controls time windows, confidence thresholds, scoring weights. See `rules/README.md` for details.
+- **[CALF Camera Segmentation](./docs/CAMERA_VIEWS.md)**
+  Understand how our system analyzes visual context to ensure broadcast-quality highlights. Learn about the CALF segmentation approach that classifies camera views via sophisticated API payloads to automatically filter out visually disruptive angles.
 
-### Web Application Configuration
-Edit `app_v2/config.yaml` to customize:
-- **Server Settings**: Host, ports, debug mode
-- **Video Processing**: Supported formats, file size limits, upload directory
-- **API Configuration**: Base URLs, concurrent job limits
-- **Gradio Settings**: UI server options, sharing, debug mode
+- **[Rule Engine Configuration](./docs/RULE_ENGINE.md)**
+  Take complete control over how highlights are scored and ranked. Uncover exhaustive hyperparameter tuning options for the sophisticated rule-based engine, allowing you to prioritize specific action types and perfectly tailor the final reel.
 
----
+## 🤝 Contributing
 
-## Development Notes
+We welcome pull requests! 
+1. Fork the repo.
+2. Create a feature branch (`git checkout -b feature/VAR-detection`).
+3. Commit your changes (`git commit -m 'Add VAR review detection'`).
+4. Push to the branch (`git push origin feature/VAR-detection`).
+5. Open a Pull Request.
 
-* Codebase uses **PyTorch** + **CUDA**  and **FFmpeg** for video I/O.
-* Multiprocessing start method is set to `spawn` in `main.py` for Windows compatibility.
-* Large intermediate npy/JSON files are stored under each video’s folder to avoid recomputation.
+Please ensure your code passes standard `flake8` linting and includes test coverage for new rules.
 
----
+## 📄 License
 
-## Module Documentation
-
-For detailed module-specific instructions:
-
-* `ball_action_spotting/README.md` - Action detection models and training
-* `CALF_segmentation/README.md` - Camera view segmentation
-* `rules/README.md` - Rule engine and scoring system
-* `app_v2/README.md` - Web application API and UI details
+This project is licensed under the MIT License - see the [LICENSE](./LICENSE) file for details.
