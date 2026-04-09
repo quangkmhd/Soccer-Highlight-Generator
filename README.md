@@ -127,6 +127,17 @@ Modify `rules/scoring.py` to adjust the camera penalty weights, then rerun the r
 python3 -m rules.evaluate --predictions pipeline_output/match/preds.json
 ```
 
+## 📂 Component Documentation
+
+For deep technical details, installation steps, and usage examples of specific modules, explore the dedicated documentation for each component:
+
+| Component | Description | Link |
+| :--- | :--- | :--- |
+| **Action & Ball Spotting** | Detects shots, passes, and ball-related events using pretrained PyTorch models. | [Read More](ball_action_spotting/README.md) |
+| **CALF Segmentation** | Classifies camera views (main, close-up, etc.) to ensure broadcast-quality highlights. | [Read More](CALF_segmentation/README.md) |
+| **Rule Engine** | Post-processes raw AI predictions into ranked, timed highlight clips based on logic. | [Read More](rules/README.md) |
+| **Automated App (v2)** | Orchestrates the full pipeline via a FastAPI REST server and Gradio Web UI. | [Read More](app_v2/README.md) |
+
 ## 🛠️ Troubleshooting
 
 - **`CUDA error: out of memory` during ResNet extraction**
