@@ -58,8 +58,9 @@ Generate your first highlight reel from a match video.
    pip install -r requirements.txt
    ```
 
-2. **Download Weights**:
-   Ensure you place the downloaded weights in the `weight/` directory (action, ball, camera, resnet folders).
+2. **Download Weights & Demos**:
+   - Download pretrained models and view demo videos from this **[Google Drive Folder](https://drive.google.com/drive/folders/1HfrgwyHZ3h4qtbAWF_RlLelu_n_U7Rkj?hl=vi)**.
+   - Ensure you place the downloaded weights in the `weight/` directory (action, ball, camera, resnet folders).
 
 3. **Run the CLI pipeline**:
    ```bash
