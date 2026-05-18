@@ -61,7 +61,9 @@ Generate your first highlight reel from a match video.
 2. **Download Weights & Demos**:
    - Download pretrained models and view demo videos from this **[Google Drive Folder](https://drive.google.com/drive/folders/1HfrgwyHZ3h4qtbAWF_RlLelu_n_U7Rkj?hl=vi)**.
    - Ensure you place the downloaded weights in the `weight/` directory (action, ball, camera, resnet folders).
-
+   - Action: https://drive.google.com/drive/u/2/folders/1vraFg-SNlQumIGZZqppekMDJfe3knxzt?hl=vi
+   - Ball action: https://drive.google.com/drive/u/2/folders/1rtFM5mWZHDafkHsapypLVuRe6q3PPjLO?hl=vi
+   - Camera: https://drive.google.com/drive/u/2/folders/1qyXhCLU1Ynt3DoLAx8c4QMCA5fEmkgIi?hl=vi
 3. **Run the CLI pipeline**:
    ```bash
    python3 main.py ./data/sample_match.mp4
